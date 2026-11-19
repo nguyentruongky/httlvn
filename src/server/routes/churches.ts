@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db';
 import { churches, regions, pastoralAssignments, pastors } from '../../db/schema';
 import { memoryStore } from '../memory-store';
@@ -35,6 +35,106 @@ const updateChurchSchema = z.object({
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 
 export const churchesRoute = new Hono()
+  .get('/:id', zValidator('param', idParam), async (c) => {
+    const { id } = c.req.valid('param');
+
+    if (!db) {
+      const item = memoryStore.churches.find((x) => x.id === id);
+      if (!item) return c.json({ error: 'Congregation not found' }, 404);
+      return c.json({ church: item });
+    }
+
+    const [church] = await db
+      .select()
+      .from(churches)
+      .where(eq(churches.id, id));
+
+    if (!church) return c.json({ error: 'Congregation not found' }, 404);
+
+    const [reg] = await db
+      .select()
+      .from(regions)
+      .where(eq(regions.id, church.regionId));
+
+    const [assign] = await db
+      .select()
+      .from(pastoralAssignments)
+      .where(eq(pastoralAssignments.churchId, id));
+
+    const pastor = assign
+      ? (
+          await db
+            .select()
+            .from(pastors)
+            .where(eq(pastors.id, assign.pastorId))
+        )[0]
+      : null;
+
+    return c.json({
+      church: {
+        id: church.id,
+        stt: church.stt,
+        code: church.code,
+        form: church.form,
+        legalType: church.legalType,
+        autonomy: church.autonomy,
+        name: church.name,
+        shortName: church.shortName,
+        parentChurchId: church.parentChurchId,
+        parentChurchName: church.parentChurchName,
+        regionCode: reg?.code ?? 'I',
+        regionName: reg?.name ?? 'Khu vực I',
+        foundedYear: church.foundedYear,
+        oldWard: church.oldWard,
+        oldAddress: church.oldAddress,
+        newAddress: church.newAddress,
+        newWard: church.newWard,
+        isInHcm: church.isInHcm,
+        memberCount: church.memberCount,
+        regularAttendanceCount: church.regularAttendanceCount,
+        note: church.note,
+        pastorName: pastor?.fullName ?? null,
+        pastorTitle: pastor?.title ?? null,
+        pastorRole: assign?.role ?? null,
+        pastorPhone: pastor?.phone ? pastor.phone.replace(/\s+/g, '').trim() : null,
+      },
+    });
+  })
+  .get('/:id/pastors', zValidator('param', idParam), async (c) => {
+    const { id } = c.req.valid('param');
+
+    if (!db) return c.json({ error: 'Database not available' }, 500);
+
+    const assignments = await db
+      .select()
+      .from(pastoralAssignments)
+      .where(eq(pastoralAssignments.churchId, id));
+
+    const pastorTable = pastors;
+    const pastorIds = assignments.map((a) => a.pastorId);
+    const allPastors =
+      pastorIds.length > 0
+        ? await db
+            .select()
+            .from(pastorTable)
+            .where(inArray(pastorTable.id, pastorIds))
+        : [];
+
+    const pastorMap = new Map(allPastors.map((p) => [p.id, p]));
+
+    return c.json({
+      pastors: assignments.map((a) => {
+        const p = pastorMap.get(a.pastorId);
+        return {
+          id: p?.id ?? null,
+          name: p?.fullName ?? 'Unknown',
+          title: p?.title ?? null,
+          phone: p?.phone ?? null,
+          role: a.role,
+        };
+      }),
+    });
+  })
   .get('/', async (c) => {
     const region = c.req.query('region') || 'ALL';
     const form = c.req.query('form') || 'ALL';
