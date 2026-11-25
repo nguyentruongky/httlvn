@@ -1,8 +1,23 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
+import { z } from 'zod';
 import { db } from '../../db';
 import { pastors, pastoralAssignments, churches, regions, pastorNhuDanh, organizations } from '../../db/schema';
 import { eq, inArray } from 'drizzle-orm';
 import { memoryStore } from '../memory-store';
+import { requireAdmin } from '../middleware/auth';
+import { matchesPrefix } from '../../lib/utils';
+
+const updatePastorSchema = z.object({
+  title: z.string().min(1).max(100).optional(),
+  phone: z.string().max(20).nullable().optional(),
+  email: z.string().email().max(100).nullable().optional(),
+  chucVu: z.string().max(100).nullable().optional(),
+  namSinh: z.coerce.number().int().min(1900).max(2100).nullable().optional(),
+  tenNhiemSo: z.string().max(100).nullable().optional(),
+  diaChi: z.string().max(200).nullable().optional(),
+  status: z.enum(['active', 'inactive']).optional(),
+});
 
 const NORMALIZE_PASTOR_NAME: Record<string, string> = {
   'v. h. thiên ân': 'Vũ Hoàng Thiên Ân',
@@ -57,6 +72,8 @@ function stripDateSuffix(text: string): string {
 
 export const pastorRoute = new Hono().get('/', async (c) => {
   const q = (c.req.query('q') || '').trim().toLowerCase();
+  const page = Math.max(Number(c.req.query('page')) || 1, 1);
+  const limit = Math.max(Number(c.req.query('limit')) || 20, 1);
 
   if (!db) {
     const map = new Map<
@@ -124,13 +141,29 @@ export const pastorRoute = new Hono().get('/', async (c) => {
     if (q) {
       list = list.filter(
         (p) =>
-          p.name.toLowerCase().includes(q) ||
-          (p.phone && p.phone.includes(q)) ||
-          p.assignments.some((a) => a.churchName.toLowerCase().includes(q))
+          matchesPrefix(p.name, q) ||
+          p.assignments.some((a) => matchesPrefix(a.churchName, q))
       );
     }
 
-    return c.json({ pastor: list, total: list.length });
+    list.sort((a, b) => {
+      const aHasHcm = a.assignments.some((x) => x.isInHcm);
+      const bHasHcm = b.assignments.some((x) => x.isInHcm);
+      if (aHasHcm !== bHasHcm) return bHasHcm ? 1 : -1;
+      const aLast = a.name.trim().split(/\s+/).pop() ?? "";
+      const bLast = b.name.trim().split(/\s+/).pop() ?? "";
+      return aLast.localeCompare(bLast, "vi", { sensitivity: "base" });
+    });
+
+    const memoryStart = (page - 1) * limit;
+    const memoryPage = list.slice(memoryStart, memoryStart + limit);
+    return c.json({
+      pastor: memoryPage,
+      total: list.length,
+      page,
+      limit,
+      hasMore: memoryStart + limit < list.length,
+    });
   }
 
   const [allPastors, allAssignments, allChurches, allOrganizations, allRegions, allNhuDanh] = await Promise.all([
@@ -290,9 +323,8 @@ export const pastorRoute = new Hono().get('/', async (c) => {
     if (q) {
       dedupedList = dedupedList.filter(
         (p) =>
-          p.name.toLowerCase().includes(q) ||
-          (p.phone && p.phone.includes(q)) ||
-          p.assignments.some((a) => a.churchName.toLowerCase().includes(q))
+          matchesPrefix(p.name, q) ||
+          p.assignments.some((a) => matchesPrefix(a.churchName, q))
       );
     }
 
@@ -304,7 +336,16 @@ export const pastorRoute = new Hono().get('/', async (c) => {
       const bLast = b.name.trim().split(/\s+/).pop() ?? "";
       return aLast.localeCompare(bLast, "vi", { sensitivity: "base" });
     });
-    return c.json({ pastor: dedupedList, total: dedupedList.length });
+
+    const start = (page - 1) * limit;
+    const pageList = dedupedList.slice(start, start + limit);
+    return c.json({
+      pastor: pageList,
+      total: dedupedList.length,
+      page,
+      limit,
+      hasMore: start + limit < dedupedList.length,
+    });
 })
 
 .get('/:name', async (c) => {
@@ -427,46 +468,69 @@ export const pastorRoute = new Hono().get('/', async (c) => {
       status: pastor.status,
       assignments,
     },
-  });
-})
+  })
+  .patch('/:name', requireAdmin(), zValidator('json', updatePastorSchema), async (c) => {
+    const name = decodeURIComponent(c.req.param('name'));
+    const body = c.req.valid('json');
 
-.get('/organizations/:id', async (c) => {
-  const id = Number(c.req.param('id'));
+    if (!db) return c.json({ error: 'Database not available' }, 503);
 
-  if (!db) return c.json({ error: 'Database not available' }, 500);
+    const [pastor] = await db
+      .select()
+      .from(pastors)
+      .where(eq(pastors.fullName, name))
+      .limit(1);
 
-  const [org] = await db.select().from(organizations).where(eq(organizations.id, id));
-  if (!org) return c.json({ error: 'Organization not found' }, 404);
+    if (!pastor) return c.json({ error: 'Pastor not found' }, 404);
 
-  const allAssignments = await db
-    .select()
-    .from(pastoralAssignments)
-    .where(eq(pastoralAssignments.organizationId, id));
+    const [updated] = await db
+      .update(pastors)
+      .set(body)
+      .where(eq(pastors.id, pastor.id))
+      .returning();
 
-  const pastorIds = allAssignments.map((a) => a.pastorId);
-  const allPastors =
-    pastorIds.length > 0
-      ? await db.select().from(pastors).where(inArray(pastors.id, pastorIds))
-      : [];
+    if (!updated) return c.json({ error: 'Pastor not found' }, 404);
+    return c.json({ pastor: updated });
+  })
 
-  const pastorMap = new Map(allPastors.map((p) => [p.id, p]));
+  .get('/organizations/:id', async (c) => {
+    const id = Number(c.req.param('id'));
 
-  const relatedPastors = allAssignments.map((a) => {
-    const p = pastorMap.get(a.pastorId);
-    return {
-      id: p?.id ?? null,
-      name: p?.fullName ?? 'Unknown',
-      title: p?.title ?? null,
-      phone: p?.phone ?? null,
-      role: a.role,
-    };
-  });
+    if (!db) return c.json({ error: 'Database not available' }, 500);
 
-  return c.json({
-    organization: {
-      id: org.id,
-      name: org.name,
-    },
-    pastors: relatedPastors,
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, id));
+    if (!org) return c.json({ error: 'Organization not found' }, 404);
+
+    const allAssignments = await db
+      .select()
+      .from(pastoralAssignments)
+      .where(eq(pastoralAssignments.organizationId, id));
+
+    const pastorIds = allAssignments.map((a) => a.pastorId);
+    const allPastors =
+      pastorIds.length > 0
+        ? await db.select().from(pastors).where(inArray(pastors.id, pastorIds))
+        : [];
+
+    const pastorMap = new Map(allPastors.map((p) => [p.id, p]));
+
+    const relatedPastors = allAssignments.map((a) => {
+      const p = pastorMap.get(a.pastorId);
+      return {
+        id: p?.id ?? null,
+        name: p?.fullName ?? 'Unknown',
+        title: p?.title ?? null,
+        phone: p?.phone ?? null,
+        role: a.role,
+      };
+    });
+
+    return c.json({
+      organization: {
+        id: org.id,
+        name: org.name,
+      },
+      pastors: relatedPastors,
+    });
   });
 });

@@ -209,6 +209,27 @@ async function seed() {
   const client = postgres(connectionString, { prepare: false, max: 1 });
   const db = drizzle(client, { schema });
 
+  // Seed admin user
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@htkv.vn';
+  const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+  const passwordHash = await Bun.password.hash(adminPassword);
+
+  const [existingAdmin] = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.email, adminEmail));
+
+  if (!existingAdmin) {
+    await db.insert(schema.users).values({
+      email: adminEmail,
+      passwordHash,
+      role: 'admin',
+    });
+    console.log(`✅ Seeded admin user: ${adminEmail} (password: ${adminPassword})`);
+  } else {
+    console.log(`ℹ️  Admin user already exists: ${adminEmail}`);
+  }
+
   const records = rawSeedRecords as RawChurchSeed[];
 
   // 1. Seed Governance Levels

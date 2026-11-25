@@ -1,8 +1,8 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import {
   Search,
-  Plus,
+  MoreVertical,
   MapPin,
   Phone,
   Users,
@@ -10,17 +10,18 @@ import {
   User,
   Calendar,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ResponsiveSheet } from "@/components/ui/responsive-sheet";
 import {
   cn,
-  normalizeSearch,
-  matchesSearch,
+  matchesPrefix,
   displayChurchName,
   displayPastorName,
   capitalize,
 } from "@/lib/utils";
+import { getUser, isAuthenticated } from "@/lib/auth";
 
 type ChurchItem = {
   id: number;
@@ -59,6 +60,19 @@ export function ChurchesPage() {
   const [selectedChurch, setSelectedChurch] = useState<ChurchItem | null>(null);
   const [churchPastors, setChurchPastors] = useState<any[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Edit form state
+  const [editName, setEditName] = useState("");
+  const [editShortName, setEditShortName] = useState("");
+  const [editOldAddress, setEditOldAddress] = useState("");
+  const [editNewAddress, setEditNewAddress] = useState("");
+  const [editNewWard, setEditNewWard] = useState("");
+  const [editFoundedYear, setEditFoundedYear] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editMemberCount, setEditMemberCount] = useState("");
+  const [editRegularAttendance, setEditRegularAttendance] = useState("");
 
   // Create form state
   const [name, setName] = useState("");
@@ -83,12 +97,27 @@ export function ChurchesPage() {
   const [memberCount, setMemberCount] = useState("60");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return () => {
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (selectedChurch && isEditing) {
+      setEditName(selectedChurch.name);
+      setEditShortName(selectedChurch.shortName);
+      setEditOldAddress(selectedChurch.oldAddress ?? "");
+      setEditNewAddress(selectedChurch.newAddress ?? "");
+      setEditNewWard(selectedChurch.newWard ?? "");
+      setEditFoundedYear(selectedChurch.foundedYear?.toString() ?? "");
+      setEditNote(selectedChurch.note ?? "");
+      setEditMemberCount(selectedChurch.memberCount.toString());
+      setEditRegularAttendance(selectedChurch.regularAttendanceCount.toString());
+    }
+  }, [selectedChurch, isEditing]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -97,35 +126,135 @@ export function ChurchesPage() {
     searchTimeout.current = setTimeout(() => setDebouncedSearch(val), 250);
   };
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["churches", regionFilter, formFilter],
-    queryFn: async () => {
+  const exportToExcel = () => {
+    const rows = churchList.map((ch) => ({
+      "Mã": ch.code,
+      "Tên Hội Thánh": ch.name,
+      "Khu vực": ch.regionCode,
+      "Hình thức": ch.form,
+      "Mục sư": ch.pastorName ?? "",
+      "Số thành viên": ch.memberCount,
+      "Tín hữu trung tín": ch.regularAttendanceCount,
+      "Địa chỉ mới": ch.newAddress ?? "",
+      "Phường/Xã": ch.newWard ?? "",
+      "Ghi chú": ch.note ?? "",
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Danh bộ Hội Thánh");
+    XLSX.writeFile(workbook, `danh-bo-hoi-thanh-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const printList = () => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Danh bộ Hội Thánh</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; padding: 24px; }
+            h1 { font-size: 18px; margin-bottom: 8px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 12px; }
+            th { background: #f5f5f5; }
+            .subtitle { font-size: 12px; color: #666; margin-bottom: 16px; }
+          </style>
+        </head>
+        <body>
+          <h1>Danh bộ Hội Thánh</h1>
+          <div class="subtitle">Tổng số: ${totalChurches} cơ sở</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Mã</th><th>Tên Hội Thánh</th><th>Khu vực</th><th>Hình thức</th><th>Mục sư</th><th>Số thành viên</th><th>Tín hữu trung tín</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${churchList
+                .map(
+                  (ch) => `<tr>
+                    <td>${ch.code}</td>
+                    <td>${ch.name}</td>
+                    <td>${ch.regionCode}</td>
+                    <td>${ch.form}</td>
+                    <td>${ch.pastorName ?? ""}</td>
+                    <td>${ch.memberCount}</td>
+                    <td>${ch.regularAttendanceCount}</td>
+                  </tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+          <script>window.print();</script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  type ChurchPage = {
+    churches: ChurchItem[];
+    total: number;
+    page: number;
+    limit: number;
+    hasMore: boolean;
+  };
+
+  const {
+    data,
+    isPending,
+    isFetching,
+    fetchNextPage,
+    hasNextPage,
+  } = useInfiniteQuery<ChurchPage>({
+    queryKey: ["churches", regionFilter, formFilter, debouncedSearch],
+    queryFn: async ({ pageParam = 1 }) => {
       const res = await api.api.churches.$get({
         query: {
           region: regionFilter,
           form: formFilter,
+          limit: "20",
+          page: String(pageParam),
+          q: debouncedSearch,
         },
       });
       if (!res.ok) throw new Error("Failed to load congregations");
-      return res.json();
+      return (await res.json()) as ChurchPage;
     },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage: ChurchPage) =>
+      lastPage.hasMore ? lastPage.page + 1 : undefined,
   });
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasNextPage) {
+          fetchNextPage();
+        }
+      },
+      { threshold: 1.0 },
+    );
+    const el = loadMoreRef.current;
+    if (el) observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasNextPage, fetchNextPage]);
 
   const churchList = useMemo(() => {
     const query = debouncedSearch;
-    return (data?.churches ?? []).filter((church) => {
+    return (data?.pages.flatMap((p) => p.churches) ?? []).filter((church) => {
       if (!query) return true;
       return (
-        matchesSearch(church.name, query) ||
-        matchesSearch(church.code, query) ||
-        matchesSearch(church.pastorName, query) ||
-        matchesSearch(church.newAddress, query) ||
-        matchesSearch(church.newWard, query) ||
-        matchesSearch(church.oldAddress, query) ||
-        matchesSearch(church.regionName, query)
+        matchesPrefix(church.name, query) ||
+        matchesPrefix(church.pastorName, query)
       );
     });
-  }, [data?.churches, debouncedSearch]);
+  }, [data, debouncedSearch]);
+
+  const totalChurches =
+    data?.pages[data.pages.length - 1]?.total ?? churchList.length;
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -190,12 +319,197 @@ export function ChurchesPage() {
     },
   });
 
+  const updateChurchDetailsMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: {
+        name?: string;
+        shortName?: string;
+        oldAddress?: string | null;
+        newAddress?: string;
+        newWard?: string;
+        foundedYear?: number | null;
+        note?: string | null;
+        memberCount?: number;
+        regularAttendanceCount?: number;
+      };
+    }) => {
+      const res = await api.api.churches[":id"].$patch({
+        param: { id: String(id) },
+        json: data,
+      });
+      if (!res.ok) throw new Error("Failed to update congregation details");
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      if (selectedChurch && selectedChurch.id === vars.id) {
+        setSelectedChurch({
+          ...selectedChurch,
+          ...vars.data,
+        });
+      }
+      setIsEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["churches"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+
+  const handleSaveChurch = () => {
+    if (!selectedChurch) return;
+    updateChurchDetailsMutation.mutate({
+      id: selectedChurch.id,
+      data: {
+        name: editName.trim() || undefined,
+        shortName: editShortName.trim() || undefined,
+        oldAddress: editOldAddress.trim() || null,
+        newAddress: editNewAddress.trim() || undefined,
+        newWard: editNewWard.trim() || undefined,
+        foundedYear: editFoundedYear ? Number(editFoundedYear) : null,
+        note: editNote.trim() || null,
+        memberCount: editMemberCount ? Number(editMemberCount) : undefined,
+        regularAttendanceCount: editRegularAttendance
+          ? Number(editRegularAttendance)
+          : undefined,
+      },
+    });
+  };
+
+  const editChurchForm = (
+    <div className="rounded-xl border border-slate-200/80 p-4 space-y-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-900">
+          Chỉnh sửa thông tin
+        </h3>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsEditing(false)}
+        >
+          Hủy
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleSaveChurch}
+          disabled={updateChurchDetailsMutation.isPending}
+        >
+          {updateChurchDetailsMutation.isPending
+            ? "Đang lưu..."
+            : "Lưu thay đổi"}
+        </Button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Tên Hội Thánh
+          </label>
+          <input
+            type="text"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Tên viết tắt
+          </label>
+          <input
+            type="text"
+            value={editShortName}
+            onChange={(e) => setEditShortName(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Địa chỉ mới (2026)
+          </label>
+          <input
+            type="text"
+            value={editNewAddress}
+            onChange={(e) => setEditNewAddress(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Phường / Xã
+          </label>
+          <input
+            type="text"
+            value={editNewWard}
+            onChange={(e) => setEditNewWard(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Địa chỉ cũ
+          </label>
+          <input
+            type="text"
+            value={editOldAddress}
+            onChange={(e) => setEditOldAddress(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Năm thành lập
+          </label>
+          <input
+            type="number"
+            value={editFoundedYear}
+            onChange={(e) => setEditFoundedYear(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Số tín hữu
+          </label>
+          <input
+            type="number"
+            value={editMemberCount}
+            onChange={(e) => setEditMemberCount(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Tín hữu trung tín
+          </label>
+          <input
+            type="number"
+            value={editRegularAttendance}
+            onChange={(e) => setEditRegularAttendance(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+          />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+            Ghi chú
+          </label>
+          <textarea
+            value={editNote}
+            onChange={(e) => setEditNote(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 min-h-[80px]"
+          />
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Danh bộ Hội Thánh ({churchList.length})
+            Danh bộ Hội Thánh ({totalChurches})
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Chi hội, Hội nhánh & Điểm nhóm trực thuộc - Kèm địa chỉ cũ & sau sáp
@@ -203,11 +517,42 @@ export function ChurchesPage() {
           </p>
         </div>
 
-        <Button variant="primary" onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4" />
-          <span>Thêm Cơ Sở</span>
+        <Button size="icon" variant="outline" onClick={() => setMenuOpen(true)}>
+          <MoreVertical className="h-5 w-5" />
         </Button>
       </div>
+
+      {/* Action Menu */}
+      <ResponsiveSheet
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        title="Hành động"
+      >
+        <div className="space-y-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              exportToExcel();
+              setMenuOpen(false);
+            }}
+            className="w-full text-left justify-between"
+          >
+            <span>Xuất Excel</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              printList();
+              setMenuOpen(false);
+            }}
+            className="w-full text-left justify-between"
+          >
+            <span>In danh sách</span>
+          </Button>
+        </div>
+      </ResponsiveSheet>
 
       {/* Search Bar */}
       <div className="relative">
@@ -261,7 +606,7 @@ export function ChurchesPage() {
       </div>
 
       {/* Congregation Cards */}
-      {isLoading ? (
+      {(isPending || isFetching) && churchList.length === 0 ? (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
             <div
@@ -286,6 +631,7 @@ export function ChurchesPage() {
               key={ch.id}
               onClick={async () => {
                 setSelectedChurch(ch);
+                setIsEditing(false);
                 try {
                   const res = await api.api.churches[":id"]["pastors"].$get({
                     param: { id: String(ch.id) },
@@ -408,6 +754,12 @@ export function ChurchesPage() {
               </div>
             </div>
           ))}
+          {isFetching && churchList.length > 0 && (
+            <div className="text-center py-4 text-xs text-slate-500">
+              Đang tải thêm…
+            </div>
+          )}
+          <div ref={loadMoreRef} className="h-[1px]" />
         </div>
       )}
 
@@ -425,7 +777,24 @@ export function ChurchesPage() {
         }
       >
         {selectedChurch && (
+          <>
           <div className="space-y-4 text-xs">
+            {isAuthenticated() && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] font-semibold uppercase text-slate-400 tracking-wider">
+                  Chi tiết Hội Thánh
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsEditing(true);
+                  }}
+                >
+                  {isEditing ? "Đang chỉnh sửa..." : "Sửa thông tin"}
+                </Button>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2.5">
               {selectedChurch.legalType !== "Cơ quan" && (
                 <div className="rounded-xl bg-slate-50 p-3">
@@ -597,6 +966,133 @@ export function ChurchesPage() {
               </div>
             )}
           </div>
+          <div className={isEditing ? "" : "hidden"}>
+            <div className="rounded-xl border border-slate-200/80 p-4 space-y-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Chỉnh sửa thông tin
+                </h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsEditing(false)}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleSaveChurch}
+                  disabled={updateChurchDetailsMutation.isPending}
+                >
+                  {updateChurchDetailsMutation.isPending
+                    ? "Đang lưu..."
+                    : "Lưu thay đổi"}
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Tên Hội Thánh
+                  </label>
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Tên viết tắt
+                  </label>
+                  <input
+                    type="text"
+                    value={editShortName}
+                    onChange={(e) => setEditShortName(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Địa chỉ mới (2026)
+                  </label>
+                  <input
+                    type="text"
+                    value={editNewAddress}
+                    onChange={(e) => setEditNewAddress(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Phường / Xã
+                  </label>
+                  <input
+                    type="text"
+                    value={editNewWard}
+                    onChange={(e) => setEditNewWard(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Địa chỉ cũ
+                  </label>
+                  <input
+                    type="text"
+                    value={editOldAddress}
+                    onChange={(e) => setEditOldAddress(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Năm thành lập
+                  </label>
+                  <input
+                    type="number"
+                    value={editFoundedYear}
+                    onChange={(e) => setEditFoundedYear(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Số tín hữu
+                  </label>
+                  <input
+                    type="number"
+                    value={editMemberCount}
+                    onChange={(e) => setEditMemberCount(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Tín hữu trung tín
+                  </label>
+                  <input
+                    type="number"
+                    value={editRegularAttendance}
+                    onChange={(e) => setEditRegularAttendance(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                    Ghi chú
+                  </label>
+                  <textarea
+                    value={editNote}
+                    onChange={(e) => setEditNote(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 min-h-[80px]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          </>
         )}
       </ResponsiveSheet>
 

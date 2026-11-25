@@ -5,6 +5,8 @@ import { asc, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db';
 import { churches, regions, pastoralAssignments, pastors } from '../../db/schema';
 import { memoryStore } from '../memory-store';
+import { requireAdmin } from '../middleware/auth';
+import { matchesPrefix } from '../../lib/utils';
 
 const createChurchSchema = z.object({
   name: z.string().min(2).max(120),
@@ -30,6 +32,12 @@ const updateChurchSchema = z.object({
   legalType: z.enum(['Chính thức', 'Nội bộ']).optional(),
   autonomy: z.enum(['Tự lập', 'Tự dưỡng']).nullable().optional(),
   newAddress: z.string().min(3).max(220).optional(),
+  oldAddress: z.string().max(220).nullable().optional(),
+  newWard: z.string().max(80).optional(),
+  foundedYear: z.coerce.number().int().min(1900).max(2030).nullable().optional(),
+  name: z.string().min(2).max(120).optional(),
+  shortName: z.string().min(2).max(120).optional(),
+  note: z.string().max(500).nullable().optional(),
 });
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
@@ -140,6 +148,8 @@ export const churchesRoute = new Hono()
     const form = c.req.query('form') || 'ALL';
     const legalType = c.req.query('legalType') || 'ALL';
     const q = (c.req.query('q') || '').trim().toLowerCase();
+    const page = Math.max(Number(c.req.query('page')) || 1, 1);
+    const limit = Math.max(Number(c.req.query('limit')) || 20, 1);
 
     if (!db) {
       let list = memoryStore.churches;
@@ -156,12 +166,8 @@ export const churchesRoute = new Hono()
       if (q) {
         list = list.filter(
           (item) =>
-            item.name.toLowerCase().includes(q) ||
-            (item.pastorName && item.pastorName.toLowerCase().includes(q)) ||
-            (item.newWard && item.newWard.toLowerCase().includes(q)) ||
-            (item.newAddress && item.newAddress.toLowerCase().includes(q)) ||
-            (item.oldAddress && item.oldAddress.toLowerCase().includes(q)) ||
-            (item.parentChurchName && item.parentChurchName.toLowerCase().includes(q))
+            matchesPrefix(item.name, q) ||
+            (item.pastorName && matchesPrefix(item.pastorName, q))
         );
       }
 
@@ -181,7 +187,14 @@ export const churchesRoute = new Hono()
         affiliatedCount: childCountMap.get(item.id) ?? 0,
       }));
 
-      return c.json({ churches: enriched, total: enriched.length });
+      const memStart = (page - 1) * limit;
+      return c.json({
+        churches: enriched.slice(memStart, memStart + limit),
+        total: enriched.length,
+        page,
+        limit,
+        hasMore: memStart + limit < enriched.length,
+      });
     }
 
     const [allChurches, allRegions, allAssignments, allPastors] = await Promise.all([
@@ -248,17 +261,22 @@ export const churchesRoute = new Hono()
     if (q) {
       list = list.filter(
         (item) =>
-          item.name.toLowerCase().includes(q) ||
-          (item.pastorName && item.pastorName.toLowerCase().includes(q)) ||
-          (item.newWard && item.newWard.toLowerCase().includes(q)) ||
-          (item.newAddress && item.newAddress.toLowerCase().includes(q)) ||
-          (item.oldAddress && item.oldAddress.toLowerCase().includes(q))
+          matchesPrefix(item.name, q) ||
+          (item.pastorName && matchesPrefix(item.pastorName, q))
       );
     }
 
-    return c.json({ churches: list, total: list.length });
+    const start = (page - 1) * limit;
+    const pageList = list.slice(start, start + limit);
+    return c.json({
+      churches: pageList,
+      total: list.length,
+      page,
+      limit,
+      hasMore: start + limit < list.length,
+    });
   })
-  .post('/', zValidator('json', createChurchSchema), async (c) => {
+  .post('/', requireAdmin(), zValidator('json', createChurchSchema), async (c) => {
     const body = c.req.valid('json');
     const prefix =
       body.form === 'Chi hội' ? 'CH' : body.form === 'Hội nhánh' ? 'HN' : 'DN';
@@ -348,6 +366,7 @@ export const churchesRoute = new Hono()
   })
   .patch(
     '/:id',
+    requireAdmin(),
     zValidator('param', idParam),
     zValidator('json', updateChurchSchema),
     async (c) => {

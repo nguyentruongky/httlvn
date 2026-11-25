@@ -57,6 +57,16 @@ else
     echo "ℹ️  .env file already exists. Skipping template generation."
 fi
 
+# Keep existing local configuration and add the production destination if missing.
+if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?PRODUCTION_DATABASE_URL[[:space:]]*=' "$ENV_FILE"; then
+    cat << 'EOF' >> "$ENV_FILE"
+
+# Production destination for bun run db:seed-prod
+PRODUCTION_DATABASE_URL=""
+EOF
+    echo "📝 Added PRODUCTION_DATABASE_URL. Set its production connection URL before seeding."
+fi
+
 echo "=================================================="
 echo "🎉 Local PostgreSQL setup completed successfully!"
 echo "Database URL: postgresql://$DB_USER@$DB_HOST:$DB_PORT/$DB_NAME"

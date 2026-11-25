@@ -6,8 +6,11 @@ import {
   Layers,
   UserCheck,
   ShieldCheck,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getUser, removeToken } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 const navItems = [
   { to: "/", label: "Tổng quan", icon: LayoutDashboard },
@@ -18,6 +21,22 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const user = getUser();
+
+  // Login page renders without the app shell layout
+  if (pathname === '/login') {
+    return <>{children}</>;
+  }
+
+  const handleLogout = async () => {
+    try {
+      await api.api.auth.logout.$post();
+    } catch {
+      // ignore
+    }
+    removeToken();
+    window.location.href = '/login';
+  };
 
   return (
     <div className="min-h-dvh flex flex-col md:flex-row bg-slate-50 text-slate-900">
@@ -57,6 +76,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
+          {user && (
+            <div className="pt-4 border-t border-slate-200 mt-4">
+              <button
+                onClick={handleLogout}
+                className="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-all"
+              >
+                <LogOut className="h-4 w-4" />
+                Đăng xuất
+              </button>
+            </div>
+          )}
         </nav>
       </aside>
 

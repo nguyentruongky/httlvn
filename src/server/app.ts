@@ -5,6 +5,7 @@ import { dashboardRoute } from './routes/dashboard';
 import { churchesRoute } from './routes/churches';
 import { departmentsRoute } from './routes/departments';
 import { pastorRoute } from './routes/pastor';
+import { authRoute } from './routes/auth';
 
 const app = new Hono();
 
@@ -26,6 +27,7 @@ const routes = app
       timestamp: new Date().toISOString(),
     });
   })
+  .route('/auth', authRoute)
   .route('/dashboard', dashboardRoute)
   .route('/churches', churchesRoute)
   .route('/departments', departmentsRoute)

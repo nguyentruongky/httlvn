@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ChurchesPage } from './pages/ChurchesPage';
 import { DepartmentsPage } from './pages/DepartmentsPage';
 import { PastorPage } from './pages/PastorPage';
+import { LoginPage } from './pages/LoginPage';
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -42,11 +43,18 @@ const pastorRoute = createRoute({
   component: PastorPage,
 });
 
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/login',
+  component: LoginPage,
+});
+
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
   churchesRoute,
   departmentsRoute,
   pastorRoute,
+  loginRoute,
 ]);
 
 export const router = createRouter({

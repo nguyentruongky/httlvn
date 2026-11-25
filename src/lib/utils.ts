@@ -38,6 +38,17 @@ export function matchesSearch(
   return normValue.includes(normQuery);
 }
 
+export function matchesPrefix(
+  value: string | null | undefined,
+  query: string
+): boolean {
+  if (!query) return true;
+  if (!value) return false;
+  const normValue = normalizeSearch(value);
+  const normQuery = normalizeSearch(query);
+  return normValue.split(/\s+/).some((word) => word.startsWith(normQuery));
+}
+
 export function displayChurchName(form: string | null | undefined, name: string): string {
   const f = (form || '').trim().toLowerCase();
   const cleanName = normalizeChurchName(name);

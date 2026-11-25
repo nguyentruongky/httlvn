@@ -5,6 +5,7 @@ import { asc, eq } from 'drizzle-orm';
 import { db } from '../../db';
 import { departments } from '../../db/schema';
 import { memoryStore } from '../memory-store';
+import { requireAdmin } from '../middleware/auth';
 
 const createDepartmentSchema = z.object({
   code: z.string().min(2).max(16).toUpperCase(),
@@ -33,7 +34,7 @@ export const departmentsRoute = new Hono()
     const rows = await db.select().from(departments).orderBy(asc(departments.id));
     return c.json({ departments: rows });
   })
-  .post('/', zValidator('json', createDepartmentSchema), async (c) => {
+  .post('/', requireAdmin(), zValidator('json', createDepartmentSchema), async (c) => {
     const body = c.req.valid('json');
     if (!db) {
       const created = {
@@ -49,6 +50,7 @@ export const departmentsRoute = new Hono()
   })
   .patch(
     '/:id',
+    requireAdmin(),
     zValidator('param', idParam),
     zValidator('json', updateDepartmentSchema),
     async (c) => {

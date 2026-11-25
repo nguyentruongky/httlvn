@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import {
   Search,
   Phone,
@@ -11,16 +11,19 @@ import {
   Shield,
   Calendar,
   Mail,
+  Edit,
+  Save,
+  X,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { ResponsiveSheet } from "@/components/ui/responsive-sheet";
+import { Button } from "@/components/ui/button";
 import {
-  matchesSearch,
   displayChurchName,
   displayPastorName,
-  normalizeChurchForDedupe,
 } from "@/lib/utils";
+import { getUser, isAuthenticated } from "@/lib/auth";
 
 type PastorItem = {
   name: string;
@@ -58,6 +61,29 @@ export function PastorPage() {
   const [scrollY, setScrollY] = useState(0);
   const isMobile = useMediaQuery("(max-width: 767px)");
   const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  const [editingPerson, setEditingPerson] = useState<PastorItem | null>(null);
+  const [editingChurch, setEditingChurch] = useState<any>(null);
+
+  const [editPastorTitle, setEditPastorTitle] = useState("");
+  const [editPastorPhone, setEditPastorPhone] = useState("");
+  const [editPastorEmail, setEditPastorEmail] = useState("");
+  const [editPastorChucVu, setEditPastorChucVu] = useState("");
+  const [editPastorNamSinh, setEditPastorNamSinh] = useState("");
+  const [editPastorTenNhiemSo, setEditPastorTenNhiemSo] = useState("");
+  const [editPastorNhuDanh, setEditPastorNhuDanh] = useState("");
+  const [editPastorDiaChi, setEditPastorDiaChi] = useState("");
+  const [editPastorStatus, setEditPastorStatus] = useState("active");
+
+  const [editChurchMemberCount, setEditChurchMemberCount] = useState("");
+  const [editChurchRegularAttendance, setEditChurchRegularAttendance] = useState("");
+  const [editChurchNewAddress, setEditChurchNewAddress] = useState("");
+  const [editChurchOldAddress, setEditChurchOldAddress] = useState("");
+  const [editChurchNewWard, setEditChurchNewWard] = useState("");
+  const [editChurchFoundedYear, setEditChurchFoundedYear] = useState("");
+  const [editChurchNote, setEditChurchNote] = useState("");
 
   useEffect(() => {
     const onScroll = () => setScrollY(window.scrollY);
@@ -69,6 +95,32 @@ export function PastorPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (editingPerson) {
+      setEditPastorTitle(editingPerson.title ?? "");
+      setEditPastorPhone(editingPerson.phone ?? "");
+      setEditPastorEmail(editingPerson.email ?? "");
+      setEditPastorChucVu(editingPerson.chucVu ?? "");
+      setEditPastorNamSinh(editingPerson.namSinh?.toString() ?? "");
+      setEditPastorTenNhiemSo(editingPerson.tenNhiemSo ?? "");
+      setEditPastorNhuDanh(editingPerson.nhuDanh ?? "");
+      setEditPastorDiaChi(editingPerson.diaChi ?? "");
+      setEditPastorStatus(editingPerson.status ?? "active");
+    }
+  }, [editingPerson]);
+
+  useEffect(() => {
+    if (editingChurch) {
+      setEditChurchMemberCount(editingChurch.memberCount?.toString() ?? "");
+      setEditChurchRegularAttendance(editingChurch.regularAttendanceCount?.toString() ?? "");
+      setEditChurchNewAddress(editingChurch.newAddress ?? "");
+      setEditChurchOldAddress(editingChurch.oldAddress ?? "");
+      setEditChurchNewWard(editingChurch.newWard ?? "");
+      setEditChurchFoundedYear(editingChurch.foundedYear?.toString() ?? "");
+      setEditChurchNote(editingChurch.note ?? "");
+    }
+  }, [editingChurch]);
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setSearch(val);
@@ -76,14 +128,55 @@ export function PastorPage() {
     debounceTimeout.current = setTimeout(() => setDebouncedSearch(val), 1000);
   };
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["pastor"],
-    queryFn: async () => {
-      const res = await api.api["giao-pham"].$get();
+  type PastorPage = {
+    pastor: PastorItem[];
+    total: number;
+    page: number;
+    limit: number;
+    hasMore: boolean;
+  };
+
+  const {
+    data,
+    isPending,
+    isFetching,
+    fetchNextPage,
+    hasNextPage,
+  } = useInfiniteQuery<PastorPage>({
+    queryKey: ["pastor", debouncedSearch],
+    queryFn: async ({ pageParam = 1 }) => {
+      const res = await api.api["giao-pham"].$get({
+        query: { page: String(pageParam), limit: "20", q: debouncedSearch },
+      });
       if (!res.ok) throw new Error("Failed to load pastor");
-      return res.json();
+      return (await res.json()) as PastorPage;
     },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage: PastorPage) =>
+      lastPage.hasMore ? lastPage.page + 1 : undefined,
   });
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasNextPage) {
+          fetchNextPage();
+        }
+      },
+      { threshold: 1.0 },
+    );
+    const el = loadMoreRef.current;
+    if (el) observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasNextPage, fetchNextPage]);
+
+  const pastorList = useMemo(
+    () => (data?.pages.flatMap((p: PastorPage) => p.pastor) ?? []),
+    [data]
+  );
+
+  const totalPastors =
+    data?.pages[data.pages.length - 1]?.total ?? pastorList.length;
 
   const handleChurchClick = async (churchId: number | null) => {
     if (!churchId) return;
@@ -189,132 +282,105 @@ export function PastorPage() {
     }
   };
 
-  const pastorList = useMemo(() => {
-    const query = debouncedSearch;
-
-    // Deduplicate pastors by name, merging assignments from duplicate entries
-    const pastorMap = new Map<
-      string,
-      {
-        name: string;
-        title: string | null;
-        phone: string | null;
+  const updatePastorMutation = useMutation({
+    mutationFn: async ({
+      name,
+      data,
+    }: {
+      name: string;
+      data: {
+        title?: string;
+        phone?: string | null;
         email?: string | null;
         chucVu?: string | null;
         namSinh?: number | null;
         tenNhiemSo?: string | null;
         diaChi?: string | null;
-        nhuDanh?: string | null;
-        status?: string | null;
-        assignments: {
-          churchId: number | null;
-          organizationId: number | null;
-          churchName: string;
-          form: string;
-          regionCode: string;
-          role: string;
-          memberCount: number;
-          source: "db" | "chuc-danh";
-          isInHcm: boolean;
-          isOtherWork?: boolean;
-        }[];
-      }
-    >();
+        status?: "active" | "inactive";
+      };
+    }) => {
+      const res = await api.api["giao-pham"][":name"].$patch({
+        param: { name: encodeURIComponent(name) },
+        json: data,
+      });
+      if (!res.ok) throw new Error("Failed to update pastor");
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      setEditingPerson(null);
+      queryClient.invalidateQueries({ queryKey: ["pastor"] });
+    },
+  });
 
-    for (const person of (data?.pastor ?? []) as PastorItem[]) {
-      const key = person.name.toLowerCase();
-      const existing = pastorMap.get(key);
-      if (existing) {
-        existing.assignments.push(...person.assignments);
-        if (!existing.phone && person.phone) existing.phone = person.phone;
-        if (!existing.email && (person as { email?: string | null }).email) {
-          existing.email = (person as { email?: string | null }).email;
-        }
-        if (!existing.chucVu && (person as { chucVu?: string | null }).chucVu) {
-          existing.chucVu = (person as { chucVu?: string | null }).chucVu;
-        }
-        if (
-          !existing.namSinh &&
-          (person as { namSinh?: number | null }).namSinh
-        ) {
-          existing.namSinh = (person as { namSinh?: number | null }).namSinh;
-        }
-        if (
-          !existing.tenNhiemSo &&
-          (person as { tenNhiemSo?: string | null }).tenNhiemSo
-        ) {
-          existing.tenNhiemSo = (
-            person as { tenNhiemSo?: string | null }
-          ).tenNhiemSo;
-        }
-        if (!existing.diaChi && (person as { diaChi?: string | null }).diaChi) {
-          existing.diaChi = (person as { diaChi?: string | null }).diaChi;
-        }
-        if (
-          !existing.nhuDanh &&
-          (person as { nhuDanh?: string | null }).nhuDanh
-        ) {
-          existing.nhuDanh = (person as { nhuDanh?: string | null }).nhuDanh;
-        }
-        if (!existing.title && person.title) existing.title = person.title;
-      } else {
-        pastorMap.set(key, {
-          ...person,
-          assignments: [...person.assignments],
-        });
-      }
-    }
+  const updateChurchFromPastorPageMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: {
+        memberCount?: number;
+        regularAttendanceCount?: number;
+        newAddress?: string;
+        oldAddress?: string | null;
+        newWard?: string;
+        foundedYear?: number | null;
+        note?: string | null;
+      };
+    }) => {
+      const res = await api.api.churches[":id"].$patch({
+        param: { id: String(id) },
+        json: data,
+      });
+      if (!res.ok) throw new Error("Failed to update congregation");
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      setEditingChurch(null);
+      queryClient.invalidateQueries({ queryKey: ["pastor"] });
+      queryClient.invalidateQueries({ queryKey: ["churches"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
 
-    // Deduplicate assignments within each pastor by normalized church name
-    // (e.g. "Hội Thánh Tuy Lý Vương" == "Hội Thánh Chi Hội Tuy Lý Vương")
-    // Prefer DB assignments over chuc-danh-derived ones
-    for (const pastor of pastorMap.values()) {
-      const dedupedMap = new Map<string, PastorItem["assignments"][number]>();
-      for (const a of pastor.assignments) {
-        const key = normalizeChurchForDedupe(a.churchName);
-        const existing = dedupedMap.get(key);
-        if (!existing) {
-          dedupedMap.set(key, a);
-        } else if (a.source === "db" && existing.source !== "db") {
-          dedupedMap.set(key, a);
-        } else if (
-          a.source === "db" &&
-          existing.source === "db" &&
-          a.churchId !== null &&
-          existing.churchId === null
-        ) {
-          dedupedMap.set(key, a);
-        }
-      }
-      pastor.assignments = Array.from(dedupedMap.values());
-    }
-
-    let list = Array.from(pastorMap.values()).sort((a, b) => {
-      const aHasHcm = a.assignments.some((x) => x.isInHcm);
-      const bHasHcm = b.assignments.some((x) => x.isInHcm);
-      if (aHasHcm !== bHasHcm) return bHasHcm ? 1 : -1;
-      const aLast = a.name.trim().split(/\s+/).pop() ?? "";
-      const bLast = b.name.trim().split(/\s+/).pop() ?? "";
-      return aLast.localeCompare(bLast, "vi", { sensitivity: "base" });
+  const handleSavePastor = () => {
+    if (!editingPerson) return;
+    updatePastorMutation.mutate({
+      name: editingPerson.name,
+      data: {
+        title: editPastorTitle.trim() || undefined,
+        phone: editPastorPhone.trim() || null,
+        email: editPastorEmail.trim() || null,
+        chucVu: editPastorChucVu.trim() || null,
+        namSinh: editPastorNamSinh ? Number(editPastorNamSinh) : null,
+        tenNhiemSo: editPastorTenNhiemSo.trim() || null,
+        diaChi: editPastorDiaChi.trim() || null,
+        status: editPastorStatus as "active" | "inactive",
+      },
     });
+  };
 
-    if (!query) return list;
-
-    return list.filter((person) => {
-      return (
-        matchesSearch(person.name, query) ||
-        matchesSearch(person.phone, query) ||
-        person.assignments.some(
-          (a) =>
-            matchesSearch(a.churchName, query) ||
-            matchesSearch(a.regionCode, query),
-        )
-      );
+  const handleSaveChurchFromPastorPage = () => {
+    if (!editingChurch) return;
+    updateChurchFromPastorPageMutation.mutate({
+      id: editingChurch.id,
+      data: {
+        memberCount: editChurchMemberCount ? Number(editChurchMemberCount) : undefined,
+        regularAttendanceCount: editChurchRegularAttendance
+          ? Number(editChurchRegularAttendance)
+          : undefined,
+        newAddress: editChurchNewAddress.trim() || undefined,
+        oldAddress: editChurchOldAddress.trim() || null,
+        newWard: editChurchNewWard.trim() || undefined,
+        foundedYear: editChurchFoundedYear ? Number(editChurchFoundedYear) : null,
+        note: editChurchNote.trim() || null,
+      },
     });
-  }, [data?.pastor, debouncedSearch]);
+  };
 
   return (
-    <div className="space-y-5">
+    <>
+      <div className="space-y-5">
       <div
         className="will-change-transform"
         style={{
@@ -324,7 +390,7 @@ export function PastorPage() {
         }}
       >
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          Danh Bộ Giáo Phẩm ({pastorList.length})
+          Danh Bộ Giáo Phẩm ({totalPastors})
         </h1>
         <p className="text-xs text-slate-500 mt-1">
           Mục sư Quản nhiệm, Kiêm nhiệm & Truyền đạo Đặc trách tại KV TP.HCM
@@ -346,7 +412,7 @@ export function PastorPage() {
         </div>
       </div>
 
-      {isLoading ? (
+      {(isPending || isFetching) && pastorList.length === 0 ? (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
             <div
@@ -435,7 +501,13 @@ export function PastorPage() {
                 ) : null}
               </div>
             </div>
-          ))}
+          )          )}
+          {isFetching && pastorList.length > 0 && (
+            <div className="text-center py-4 text-xs text-slate-500">
+              Đang tải thêm…
+            </div>
+          )}
+          <div ref={loadMoreRef} className="h-[1px]" />
         </div>
       )}
 
@@ -451,6 +523,24 @@ export function PastorPage() {
       >
         {selectedPerson && (
           <div className="space-y-5 text-sm">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="text-[10px] font-semibold uppercase text-slate-400 tracking-wider">
+                Chi tiết Giáo Phẩm
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!isAuthenticated() || !selectedPerson}
+                onClick={() => {
+                  if (!isAuthenticated()) return;
+                  setEditingPerson(selectedPerson);
+                }}
+              >
+                {editingPerson?.name === selectedPerson?.name
+                  ? "Đang chỉnh sửa..."
+                  : "Sửa thông tin"}
+              </Button>
+            </div>
             {(() => {
               const hasAnyData = Boolean(
                 selectedPerson.phone ||
@@ -879,5 +969,279 @@ export function PastorPage() {
         ) : null}
       </ResponsiveSheet>
     </div>
+
+    {/* Pastor Edit Form */}
+    {editingPerson && (
+      <div className="max-w-lg mx-auto mt-8">
+        <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-slate-900">
+              Chỉnh sửa Giáo Phẩm
+            </h3>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditingPerson(null)}
+            >
+              <X className="h-4 w-4" /> Hủy
+            </Button>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSavePastor();
+            }}
+            className="space-y-3"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Chức danh
+                </label>
+                <input
+                  type="text"
+                  value={editPastorTitle}
+                  onChange={(e) => setEditPastorTitle(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Số điện thoại
+                </label>
+                <input
+                  type="tel"
+                  value={editPastorPhone}
+                  onChange={(e) => setEditPastorPhone(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={editPastorEmail}
+                  onChange={(e) => setEditPastorEmail(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Chức vụ
+                </label>
+                <input
+                  type="text"
+                  value={editPastorChucVu}
+                  onChange={(e) => setEditPastorChucVu(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Năm sinh
+                </label>
+                <input
+                  type="number"
+                  value={editPastorNamSinh}
+                  onChange={(e) => setEditPastorNamSinh(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Tên nhiệm sở
+                </label>
+                <input
+                  type="text"
+                  value={editPastorTenNhiemSo}
+                  onChange={(e) => setEditPastorTenNhiemSo(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Nhủ danh
+                </label>
+                <input
+                  type="text"
+                  value={editPastorNhuDanh}
+                  onChange={(e) => setEditPastorNhuDanh(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Địa chỉ
+                </label>
+                <input
+                  type="text"
+                  value={editPastorDiaChi}
+                  onChange={(e) => setEditPastorDiaChi(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Trạng thái
+                </label>
+                <select
+                  value={editPastorStatus}
+                  onChange={(e) => setEditPastorStatus(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                >
+                  <option value="active">Hoạt động</option>
+                  <option value="inactive">Ngưng hoạt động</option>
+                </select>
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => setEditingPerson(null)}
+              >
+                Hủy
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={updatePastorMutation.isPending}
+              >
+                {updatePastorMutation.isPending
+                  ? "Đang lưu..."
+                  : "Lưu thay đổi"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+
+    {/* Church Edit Form */}
+    {editingChurch && (
+      <div className="max-w-lg mx-auto mt-8">
+        <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-slate-900">
+              Chỉnh sửa Hội Thánh
+            </h3>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditingChurch(null)}
+            >
+              <X className="h-4 w-4" /> Hủy
+            </Button>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSaveChurchFromPastorPage();
+            }}
+            className="space-y-3"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Số tín hữu
+                </label>
+                <input
+                  type="number"
+                  value={editChurchMemberCount}
+                  onChange={(e) => setEditChurchMemberCount(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Tín hữu trung tín
+                </label>
+                <input
+                  type="number"
+                  value={editChurchRegularAttendance}
+                  onChange={(e) => setEditChurchRegularAttendance(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Địa chỉ mới (2026)
+                </label>
+                <input
+                  type="text"
+                  value={editChurchNewAddress}
+                  onChange={(e) => setEditChurchNewAddress(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Phường / Xã
+                </label>
+                <input
+                  type="text"
+                  value={editChurchNewWard}
+                  onChange={(e) => setEditChurchNewWard(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Địa chỉ cũ
+                </label>
+                <input
+                  type="text"
+                  value={editChurchOldAddress}
+                  onChange={(e) => setEditChurchOldAddress(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Năm thành lập
+                </label>
+                <input
+                  type="number"
+                  value={editChurchFoundedYear}
+                  onChange={(e) => setEditChurchFoundedYear(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  Ghi chú
+                </label>
+                <textarea
+                  value={editChurchNote}
+                  onChange={(e) => setEditChurchNote(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 min-h-[80px]"
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => setEditingChurch(null)}
+              >
+                Hủy
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={updateChurchFromPastorPageMutation.isPending}
+              >
+                {updateChurchFromPastorPageMutation.isPending
+                  ? "Đang lưu..."
+                  : "Lưu thay đổi"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
