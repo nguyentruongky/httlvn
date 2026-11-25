@@ -7,6 +7,7 @@ import {
   UserCheck,
   ShieldCheck,
   LogOut,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getUser, removeToken } from "@/lib/auth";
@@ -17,6 +18,7 @@ const navItems = [
   { to: "/churches", label: "Hội Thánh", icon: Church },
   { to: "/departments", label: "Ban ngành", icon: Layers },
   { to: "/giao-pham", label: "Giáo phẩm", icon: UserCheck },
+  { to: "/lessons", label: "Bài học", icon: BookOpen },
 ] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -24,7 +26,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const user = getUser();
 
   // Login page renders without the app shell layout
-  if (pathname === '/login') {
+  if (pathname === "/login") {
     return <>{children}</>;
   }
 
@@ -35,7 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       // ignore
     }
     removeToken();
-    window.location.href = '/login';
+    window.location.href = "/login";
   };
 
   return (

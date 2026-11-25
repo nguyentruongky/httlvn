@@ -170,6 +170,18 @@ export const assemblyDelegates = pgTable('assembly_delegates', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const lessons = pgTable('lessons', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  content: text('content').notNull(),
+  sourceUrl: text('source_url').notNull(),
+  tags: text('tags').array().notNull().default([]),
+  questions: text('questions').notNull(),
+  contact: text('contact').notNull(),
+  searchText: text('search_text'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   email: text('email').notNull().unique(),

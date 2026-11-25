@@ -10,6 +10,8 @@ import { ChurchesPage } from './pages/ChurchesPage';
 import { DepartmentsPage } from './pages/DepartmentsPage';
 import { PastorPage } from './pages/PastorPage';
 import { LoginPage } from './pages/LoginPage';
+import { LessonsPage } from './pages/LessonsPage';
+import { LessonDetailPage } from './pages/LessonDetailPage';
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -43,6 +45,18 @@ const pastorRoute = createRoute({
   component: PastorPage,
 });
 
+const lessonsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/lessons',
+  component: LessonsPage,
+});
+
+export const lessonDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/lessons/:lessonId',
+  component: LessonDetailPage,
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/login',
@@ -54,6 +68,8 @@ const routeTree = rootRoute.addChildren([
   churchesRoute,
   departmentsRoute,
   pastorRoute,
+  lessonsRoute,
+  lessonDetailRoute,
   loginRoute,
 ]);
 

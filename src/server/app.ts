@@ -5,6 +5,7 @@ import { dashboardRoute } from './routes/dashboard';
 import { churchesRoute } from './routes/churches';
 import { departmentsRoute } from './routes/departments';
 import { pastorRoute } from './routes/pastor';
+import { lessonsRoute } from './routes/lessons';
 import { authRoute } from './routes/auth';
 
 const app = new Hono();
@@ -31,7 +32,8 @@ const routes = app
   .route('/dashboard', dashboardRoute)
   .route('/churches', churchesRoute)
   .route('/departments', departmentsRoute)
-  .route('/giao-pham', pastorRoute);
+  .route('/giao-pham', pastorRoute)
+  .route('/lessons', lessonsRoute);
 
 export type AppType = typeof routes;
 export default app;
