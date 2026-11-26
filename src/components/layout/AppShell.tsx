@@ -124,7 +124,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               key={item.to}
               to={item.to}
               className={cn(
-                "flex flex-col items-center justify-center gap-1 min-w-[68px] min-h-[44px] rounded-xl px-2 py-1 text-[11px] font-medium transition-transform active:scale-95",
+                "flex flex-col items-center justify-center gap-1 min-w-17 min-h-11 rounded-xl px-2 py-1 text-[11px] font-medium transition-transform active:scale-95",
                 active
                   ? "text-indigo-600"
                   : "text-slate-400 hover:text-slate-600",

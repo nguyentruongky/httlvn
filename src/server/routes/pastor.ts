@@ -3,10 +3,11 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { db } from '../../db';
 import { pastors, pastoralAssignments, churches, regions, pastorNhuDanh, organizations } from '../../db/schema';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, ilike, or, desc, count, sql } from 'drizzle-orm';
 import { memoryStore } from '../memory-store';
 import { requireAdmin } from '../middleware/auth';
 import { matchesPrefix } from '../../lib/utils';
+import { removeVietnameseDiacritics } from '../../lib/vietnamese';
 
 const updatePastorSchema = z.object({
   title: z.string().min(1).max(100).optional(),
@@ -74,6 +75,7 @@ export const pastorRoute = new Hono().get('/', async (c) => {
   const q = (c.req.query('q') || '').trim().toLowerCase();
   const page = Math.max(Number(c.req.query('page')) || 1, 1);
   const limit = Math.max(Number(c.req.query('limit')) || 20, 1);
+  const offset = (page - 1) * limit;
 
   if (!db) {
     const map = new Map<
@@ -166,13 +168,72 @@ export const pastorRoute = new Hono().get('/', async (c) => {
     });
   }
 
-  const [allPastors, allAssignments, allChurches, allOrganizations, allRegions, allNhuDanh] = await Promise.all([
-    db.select().from(pastors),
-    db.select().from(pastoralAssignments),
-    db.select().from(churches),
-    db.select().from(organizations),
+  // Build search condition
+  const searchTerm = q ? `%${removeVietnameseDiacritics(q).toLowerCase()}%` : null;
+  
+  // Get total count first
+  let whereClause: any;
+  if (searchTerm) {
+    whereClause = or(
+      ilike(pastors.searchText, searchTerm),
+      sql`exists (
+        select 1 from pastoral_assignments pa
+        join churches ch on pa.church_id = ch.id
+        where pa.pastor_id = ${pastors.id}
+        and ch.name ILIKE ${searchTerm}
+      )`,
+    );
+  }
+
+  const [totalResult] = await db
+    .select({ count: count() })
+    .from(pastors)
+    .where(whereClause);
+
+  const total = totalResult?.count || 0;
+
+  // Fetch paginated pastors
+  const pastorRows = await db
+    .select()
+    .from(pastors)
+    .where(whereClause)
+    .orderBy(
+      // Sort: HCM first, then by last name
+      sql`case when exists (
+        select 1 from pastoral_assignments pa
+        join churches ch on pa.church_id = ch.id
+        where pa.pastor_id = ${pastors.id}
+        and ch.is_in_hcm = true
+      ) then 0 else 1 end`,
+      sql`split_part(trim(${pastors.fullName}), ' ', array_length(string_to_array(trim(${pastors.fullName}), ' '), 1))`,
+    )
+    .limit(limit)
+    .offset(offset);
+
+  if (pastorRows.length === 0) {
+    return c.json({ pastor: [], total: 0, page, limit, hasMore: false });
+  }
+
+  const pastorIds = pastorRows.map((p) => p.id);
+
+  // Fetch assignments for these pastors only
+  const allAssignments = await db
+    .select()
+    .from(pastoralAssignments)
+    .where(inArray(pastoralAssignments.pastorId, pastorIds));
+
+  const churchIds = allAssignments
+    .map((a) => a.churchId)
+    .filter((id): id is number => id !== null);
+  const organizationIds = allAssignments
+    .map((a) => a.organizationId)
+    .filter((id): id is number => id !== null);
+
+  const [allChurches, allOrganizations, allRegions, allNhuDanh] = await Promise.all([
+    churchIds.length > 0 ? db.select().from(churches).where(inArray(churches.id, churchIds)) : [],
+    organizationIds.length > 0 ? db.select().from(organizations).where(inArray(organizations.id, organizationIds)) : [],
     db.select().from(regions),
-    db.select().from(pastorNhuDanh),
+    db.select().from(pastorNhuDanh).where(inArray(pastorNhuDanh.pastorId, pastorIds)),
   ]);
 
   const churchMap = new Map(allChurches.map((ch) => [ch.id, ch]));
@@ -180,172 +241,162 @@ export const pastorRoute = new Hono().get('/', async (c) => {
   const regionMap = new Map(allRegions.map((r) => [r.id, r]));
   const nhuDanhMap = new Map(allNhuDanh.map((n) => [n.pastorId, n.nhuDanh]));
 
-    const list = allPastors.map((p) => {
-      const parsed = parsePastorName(p.fullName);
+  const list = pastorRows.map((p) => {
+    const parsed = parsePastorName(p.fullName);
 
-      const dbAssigns = allAssignments
-        .filter((a) => a.pastorId === p.id)
-        .map((a) => {
-          if (a.assignmentType === 'other') {
-            return {
-              churchId: null as number | null,
-              organizationId: null as number | null,
-              churchName: a.workName ?? a.rawAssignmentText ?? 'Công việc khác',
-              form: 'Khác' as const,
-              regionCode: '—' as const,
-              role: a.role,
-              memberCount: 0,
-              source: 'db' as const,
-              isInHcm: false,
-              isOtherWork: true,
-            };
-          }
-          if (a.organizationId) {
-            const org = orgMap.get(a.organizationId);
-            return {
-              churchId: null as number | null,
-              organizationId: a.organizationId,
-              churchName: org?.name ?? 'Unknown',
-              form: 'Cơ quan' as const,
-              regionCode: '—' as const,
-              role: a.role,
-              memberCount: 0,
-              source: 'db' as const,
-              isInHcm: false,
-              isOtherWork: false,
-            };
-          }
-          const ch = churchMap.get(a.churchId as number);
-          const reg = ch ? regionMap.get(ch.regionId) : undefined;
+    const dbAssigns = allAssignments
+      .filter((a) => a.pastorId === p.id)
+      .map((a) => {
+        if (a.assignmentType === 'other') {
           return {
-            churchId: a.churchId as number | null,
+            churchId: null as number | null,
             organizationId: null as number | null,
-            churchName: ch?.name ?? 'Unknown',
-            form: ch?.form ?? 'Chi hội',
-            regionCode: reg?.code ?? 'I',
+            churchName: a.workName ?? a.rawAssignmentText ?? 'Công việc khác',
+            form: 'Khác' as const,
+            regionCode: '—' as const,
             role: a.role,
-            memberCount: ch?.memberCount ?? 0,
+            memberCount: 0,
             source: 'db' as const,
-            isInHcm: ch?.isInHcm ?? false,
+            isInHcm: false,
+            isOtherWork: true,
+          };
+        }
+        if (a.organizationId) {
+          const org = orgMap.get(a.organizationId);
+          return {
+            churchId: null as number | null,
+            organizationId: a.organizationId,
+            churchName: org?.name ?? 'Unknown',
+            form: 'Cơ quan' as const,
+            regionCode: '—' as const,
+            role: a.role,
+            memberCount: 0,
+            source: 'db' as const,
+            isInHcm: false,
             isOtherWork: false,
           };
-        });
-
-      return {
-        name: parsed.name,
-        title: p.title,
-        phone: normalizePhone(p.phone),
-        email: p.email,
-        chucVu: p.chucVu,
-        namSinh: p.namSinh ?? parsed.namSinh,
-        tenNhiemSo: p.tenNhiemSo,
-        diaChi: p.diaChi,
-        nhuDanh: nhuDanhMap.get(p.id) ?? null,
-        assignments: [...dbAssigns],
-      };
-    });
-
-    // Deduplicate pastors by normalized name (merge assignments, keep best data)
-    const dedupedMap = new Map<
-      string,
-      {
-        name: string;
-        title: string | null;
-        phone: string | null;
-        email: string | null;
-        chucVu: string | null;
-        namSinh: number | null;
-        tenNhiemSo: string | null;
-        diaChi: string | null;
-        nhuDanh: string | null;
-        assignments: {
-          churchId: number | null;
-          organizationId: number | null;
-          churchName: string;
-          form: string;
-          regionCode: string;
-          role: string;
-          memberCount: number;
-          source: 'db' | 'chuc-danh';
-          isInHcm: boolean;
-          isOtherWork?: boolean;
-        }[];
-      }
-    >();
-
-    for (const person of list) {
-      const key = normalizePastorName(person.name);
-      const existing = dedupedMap.get(key);
-      if (existing) {
-        existing.assignments.push(...person.assignments);
-        if (!existing.phone && person.phone) existing.phone = person.phone;
-        if (!existing.email && person.email) existing.email = person.email;
-        if (!existing.chucVu && person.chucVu) existing.chucVu = person.chucVu;
-        if (!existing.namSinh && person.namSinh) existing.namSinh = person.namSinh;
-        if (!existing.title && person.title) existing.title = person.title;
-      } else {
-        dedupedMap.set(key, { ...person, assignments: [...person.assignments] });
-      }
-    }
-
-    // Deduplicate assignments within each pastor by normalized church name
-    const normalizeChurchKey = (name: string) =>
-      name
-        .trim()
-        .replace(/^(chi hội|hội nhánh|điểm nhóm)\s+/i, '')
-        .replace(/\s*\([^)]*\)\s*$/, '')
-        .toLowerCase()
-        .replace(/\s+/g, ' ');
-
-    for (const pastor of dedupedMap.values()) {
-      const dedupedAssignments = new Map<string, (typeof pastor.assignments)[number]>();
-      for (const a of pastor.assignments) {
-        const key = normalizeChurchKey(a.churchName);
-        const existing = dedupedAssignments.get(key);
-        if (!existing) {
-          dedupedAssignments.set(key, a);
-        } else if (a.source === 'db' && existing.source !== 'db') {
-          dedupedAssignments.set(key, a);
-        } else if (
-          a.source === 'db' &&
-          existing.source === 'db' &&
-          a.churchId !== null &&
-          existing.churchId === null
-        ) {
-          dedupedAssignments.set(key, a);
         }
+        const ch = churchMap.get(a.churchId as number);
+        const reg = ch ? regionMap.get(ch.regionId) : undefined;
+        return {
+          churchId: a.churchId as number | null,
+          organizationId: null as number | null,
+          churchName: ch?.name ?? 'Unknown',
+          form: ch?.form ?? 'Chi hội',
+          regionCode: reg?.code ?? 'I',
+          role: a.role,
+          memberCount: ch?.memberCount ?? 0,
+          source: 'db' as const,
+          isInHcm: ch?.isInHcm ?? false,
+          isOtherWork: false,
+        };
+      });
+
+    return {
+      name: parsed.name,
+      title: p.title,
+      phone: normalizePhone(p.phone),
+      email: p.email,
+      chucVu: p.chucVu,
+      namSinh: p.namSinh ?? parsed.namSinh,
+      tenNhiemSo: p.tenNhiemSo,
+      diaChi: p.diaChi,
+      nhuDanh: nhuDanhMap.get(p.id) ?? null,
+      assignments: [...dbAssigns],
+    };
+  });
+
+  // Deduplicate pastors by normalized name (merge assignments, keep best data)
+  const dedupedMap = new Map<
+    string,
+    {
+      name: string;
+      title: string | null;
+      phone: string | null;
+      email: string | null;
+      chucVu: string | null;
+      namSinh: number | null;
+      tenNhiemSo: string | null;
+      diaChi: string | null;
+      nhuDanh: string | null;
+      assignments: {
+        churchId: number | null;
+        organizationId: number | null;
+        churchName: string;
+        form: string;
+        regionCode: string;
+        role: string;
+        memberCount: number;
+        source: 'db' | 'chuc-danh';
+        isInHcm: boolean;
+        isOtherWork?: boolean;
+      }[];
+    }
+  >();
+
+  for (const person of list) {
+    const key = normalizePastorName(person.name);
+    const existing = dedupedMap.get(key);
+    if (existing) {
+      existing.assignments.push(...person.assignments);
+      if (!existing.phone && person.phone) existing.phone = person.phone;
+      if (!existing.email && person.email) existing.email = person.email;
+      if (!existing.chucVu && person.chucVu) existing.chucVu = person.chucVu;
+      if (!existing.namSinh && person.namSinh) existing.namSinh = person.namSinh;
+      if (!existing.title && person.title) existing.title = person.title;
+    } else {
+      dedupedMap.set(key, { ...person, assignments: [...person.assignments] });
+    }
+  }
+
+  // Deduplicate assignments within each pastor by normalized church name
+  const normalizeChurchKey = (name: string) =>
+    name
+      .trim()
+      .replace(/^(chi hội|hội nhánh|điểm nhóm)\s+/i, '')
+      .replace(/\s*\([^)]*\)\s*$/, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+
+  for (const pastor of dedupedMap.values()) {
+    const dedupedAssignments = new Map<string, (typeof pastor.assignments)[number]>();
+    for (const a of pastor.assignments) {
+      const key = normalizeChurchKey(a.churchName);
+      const existing = dedupedAssignments.get(key);
+      if (!existing) {
+        dedupedAssignments.set(key, a);
+      } else if (a.source === 'db' && existing.source !== 'db') {
+        dedupedAssignments.set(key, a);
+      } else if (
+        a.source === 'db' &&
+        existing.source === 'db' &&
+        a.churchId !== null &&
+        existing.churchId === null
+      ) {
+        dedupedAssignments.set(key, a);
       }
-      pastor.assignments = Array.from(dedupedAssignments.values());
     }
+    pastor.assignments = Array.from(dedupedAssignments.values());
+  }
 
-    let dedupedList = Array.from(dedupedMap.values());
+  let dedupedList = Array.from(dedupedMap.values());
 
-    if (q) {
-      dedupedList = dedupedList.filter(
-        (p) =>
-          matchesPrefix(p.name, q) ||
-          p.assignments.some((a) => matchesPrefix(a.churchName, q))
-      );
-    }
+  dedupedList.sort((a, b) => {
+    const aHasHcm = a.assignments.some((x) => x.isInHcm);
+    const bHasHcm = b.assignments.some((x) => x.isInHcm);
+    if (aHasHcm !== bHasHcm) return bHasHcm ? 1 : -1;
+    const aLast = a.name.trim().split(/\s+/).pop() ?? "";
+    const bLast = b.name.trim().split(/\s+/).pop() ?? "";
+    return aLast.localeCompare(bLast, "vi", { sensitivity: "base" });
+  });
 
-    dedupedList.sort((a, b) => {
-      const aHasHcm = a.assignments.some((x) => x.isInHcm);
-      const bHasHcm = b.assignments.some((x) => x.isInHcm);
-      if (aHasHcm !== bHasHcm) return bHasHcm ? 1 : -1;
-      const aLast = a.name.trim().split(/\s+/).pop() ?? "";
-      const bLast = b.name.trim().split(/\s+/).pop() ?? "";
-      return aLast.localeCompare(bLast, "vi", { sensitivity: "base" });
-    });
-
-    const start = (page - 1) * limit;
-    const pageList = dedupedList.slice(start, start + limit);
-    return c.json({
-      pastor: pageList,
-      total: dedupedList.length,
-      page,
-      limit,
-      hasMore: start + limit < dedupedList.length,
-    });
+  return c.json({
+    pastor: dedupedList,
+    total,
+    page,
+    limit,
+    hasMore: offset + limit < total,
+  });
 })
 
 .get('/:name', async (c) => {

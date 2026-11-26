@@ -3,6 +3,7 @@ import postgres from 'postgres';
 import { eq } from 'drizzle-orm';
 import * as schema from './schema';
 import rawSeedRecords from './seed-data.json';
+import { removeVietnameseDiacritics } from '../lib/vietnamese';
 
 interface RawChurchSeed {
   stt: number;
@@ -281,12 +282,25 @@ async function seed() {
           title: parsed.title,
           phone: rec.phone,
           status: 'active',
+          searchText: removeVietnameseDiacritics(`${parsed.cleanName} ${rec.phone ?? ''}`).toLowerCase(),
         })
         .returning();
       pastorIdByName.set(key, inserted.id);
     }
   }
   console.log(`✅ Seeded ${pastorIdByName.size} pastor records`);
+
+  // Update searchText for existing pastors
+  for (const pastor of existingPastors) {
+    if (!pastor.searchText) {
+      await db
+        .update(schema.pastors)
+        .set({
+          searchText: removeVietnameseDiacritics(`${pastor.fullName} ${pastor.phone ?? ''}`).toLowerCase(),
+        })
+        .where(eq(schema.pastors.id, pastor.id));
+    }
+  }
 
   // 4. First Pass: Insert / Upsert all 172 Churches
   const churchIdByShortName = new Map<string, number>();

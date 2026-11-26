@@ -163,7 +163,7 @@ export function PastorPage() {
           fetchNextPage();
         }
       },
-      { threshold: 1.0 },
+      { rootMargin: '300px', threshold: 0 },
     );
     const el = loadMoreRef.current;
     if (el) observer.observe(el);
@@ -412,7 +412,7 @@ export function PastorPage() {
         </div>
       </div>
 
-      {(isPending || isFetching) && pastorList.length === 0 ? (
+      {isPending && pastorList.length === 0 ? (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
             <div

@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, boolean, timestamp, real } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, integer, boolean, timestamp, real, index } from 'drizzle-orm/pg-core';
 
 export const governanceLevels = pgTable('governance_levels', {
   id: serial('id').primaryKey(),
@@ -14,7 +14,9 @@ export const organizations = pgTable('organizations', {
   id: serial('id').primaryKey(),
   name: text('name').notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  nameIdx: index('organizations_name_idx').on(table.name),
+}));
 
 export const regions = pgTable('regions', {
   id: serial('id').primaryKey(),
@@ -32,12 +34,17 @@ export const pastors = pgTable('pastors', {
   phone: text('phone'),
   email: text('email'),
   status: text('status').notNull().default('active'),
-  chucVu: text('chuc_vu'),        // chức vụ
-  namSinh: integer('nam_sinh'),   // năm sinh
-  tenNhiemSo: text('ten_nhiem_so'), // tên nhiệm sở
-  diaChi: text('dia_chi'),        // địa chỉ
+  chucVu: text('chuc_vu'),
+  namSinh: integer('nam_sinh'),
+  tenNhiemSo: text('ten_nhiem_so'),
+  diaChi: text('dia_chi'),
+  searchText: text('search_text'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  nameIdx: index('pastors_name_idx').on(table.fullName),
+  searchIdx: index('pastors_search_idx').on(table.searchText),
+  statusIdx: index('pastors_status_idx').on(table.status),
+}));
 
 export const pastorNhuDanh = pgTable('pastor_nhu_danh', {
   id: serial('id').primaryKey(),
@@ -76,7 +83,11 @@ export const churches = pgTable('churches', {
   regularAttendanceCount: integer('regular_attendance_count').notNull().default(0),
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  regionIdx: index('churches_region_idx').on(table.regionId),
+  isInHcmIdx: index('churches_is_in_hcm_idx').on(table.isInHcm),
+  nameIdx: index('churches_name_idx').on(table.name),
+}));
 
 export const pastoralAssignments = pgTable('pastoral_assignments', {
   id: serial('id').primaryKey(),
@@ -93,7 +104,11 @@ export const pastoralAssignments = pgTable('pastoral_assignments', {
   workName: text('work_name'),
   rawAssignmentText: text('raw_assignment_text'),
   assignedAt: timestamp('assigned_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  pastorIdx: index('assignments_pastor_idx').on(table.pastorId),
+  churchIdx: index('assignments_church_idx').on(table.churchId),
+  orgIdx: index('assignments_org_idx').on(table.organizationId),
+}));
 
 export const departments = pgTable('departments', {
   id: serial('id').primaryKey(),

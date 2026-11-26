@@ -53,7 +53,7 @@ const lessonsRoute = createRoute({
 
 export const lessonDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/lessons/:lessonId',
+  path: '/lessons/$lessonId',
   component: LessonDetailPage,
 });
 

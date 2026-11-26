@@ -1,14 +1,12 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { lessonDetailRoute } from '@/router';
+import { lessonDetailRoute, lessonsRoute } from '@/router';
+import { useNavigate } from '@tanstack/react-router';
 import {
   FileText,
-  Copy,
-  ExternalLink,
   BookOpen,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 
 type Lesson = {
   id: string;
@@ -22,11 +20,28 @@ type Lesson = {
   createdAt?: string;
 };
 
+const tagColors = [
+  'bg-indigo-100 text-indigo-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-700',
+  'bg-rose-100 text-rose-700',
+  'bg-violet-100 text-violet-700',
+  'bg-cyan-100 text-cyan-700',
+  'bg-orange-100 text-orange-700',
+  'bg-pink-100 text-pink-700',
+];
+
+function getTagColor(tag: string): string {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) {
+    hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return tagColors[Math.abs(hash) % tagColors.length];
+}
+
 export function LessonDetailPage() {
-  const lessonId =
-    typeof window !== 'undefined'
-      ? (window.location.pathname.match(/\/lessons\/(.*)\.html$/i) || [])[1].replace('.html', '')
-      : '';
+  const { lessonId } = lessonDetailRoute.useParams();
+  const navigate = useNavigate();
 
   const { data: lesson, isLoading, error } = useQuery({
     queryKey: ['lessons', lessonId],
@@ -69,48 +84,47 @@ export function LessonDetailPage() {
 
   const dateDisplay = `${lesson.id.slice(6, 8)}/${lesson.id.slice(4, 6)}/${lesson.id.slice(0, 4)}`;
 
+  const formattedContent = lesson.content
+    .split('\n\n')
+    .map((para: string) => {
+      let formatted = para;
+      formatted = formatted.replace(/Giô-suê\s+(\d+:\d+(?:-\d+)?)/g, 'Kinh Thánh: Giô-suê $1');
+      return formatted;
+    })
+    .join('\n\n');
+
+  const handleTagClick = (tag: string) => {
+    navigate({ to: '/lessons', search: { q: tag } });
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
-              {dateDisplay}
-            </span>
-            <span className="ml-2 text-[11px] font-medium text-slate-500">
-              {lesson.tags[0] ?? ''}
-            </span>
-          </div>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 leading-tight">
-            {lesson.title}
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Lưu trữ · {lesson.tags.join(', ')}
-          </p>
-        </div>
+      <div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              navigator.clipboard.writeText(lesson.sourceUrl);
-            }}
-          >
-            <Copy className="h-4 w-4" /> Sao chép liên kết
-          </Button>
-          <a
-            href={lesson.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline"
-          >
-            <ExternalLink className="h-3 w-3" /> Xem trên trang web
-          </a>
+          <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
+            {dateDisplay}
+          </span>
         </div>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 leading-tight">
+          {lesson.title}
+        </h1>
+        {lesson.tags.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {lesson.tags.map((tag, i) => (
+              <button
+                key={tag}
+                onClick={() => handleTagClick(tag)}
+                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)} hover:opacity-80 transition-opacity cursor-pointer`}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="prose prose-sm text-slate-700 max-w-none">
-        {lesson.content.split('\n\n').map((para: string, i: number) => (
+        {formattedContent.split('\n\n').map((para: string, i: number) => (
           <p key={i} className="mb-4 leading-relaxed whitespace-pre-line">
             {para}
           </p>

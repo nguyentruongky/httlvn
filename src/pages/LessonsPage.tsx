@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { api } from "@/lib/api";
 import { BookOpen, Search, Loader2 } from "lucide-react";
 
@@ -22,12 +22,32 @@ type LessonsResponse = {
   totalPages: number;
 };
 
+const tagColors = [
+  'bg-indigo-100 text-indigo-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-700',
+  'bg-rose-100 text-rose-700',
+  'bg-violet-100 text-violet-700',
+  'bg-cyan-100 text-cyan-700',
+  'bg-orange-100 text-orange-700',
+  'bg-pink-100 text-pink-700',
+];
+
+function getTagColor(tag: string): string {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) {
+    hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return tagColors[Math.abs(hash) % tagColors.length];
+}
+
 export function LessonsPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const observerTargetRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (debounceTimerRef.current) {
@@ -148,18 +168,16 @@ export function LessonsPage() {
             {lessons.map((lesson) => (
               <Link
                 key={lesson.id}
-                to={`/lessons/${lesson.id}` as any}
+                to="/lessons/$lessonId"
+                params={{ lessonId: lesson.id }}
                 className="block"
               >
-                <div className="rounded-2xl border border-slate-200/80 bg-white p-5 hover:border-indigo-300 transition-all cursor-pointer group">
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-5 hover:border-indigo-300 transition-all cursor-pointer group flex flex-col h-full">
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div>
                       <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
                         {lesson.id.slice(0, 4)}-{lesson.id.slice(4, 6)}-
                         {lesson.id.slice(6, 8)}
-                      </span>
-                      <span className="ml-2 text-[11px] font-medium text-slate-500">
-                        {lesson.tags[0] ?? ""}
                       </span>
                     </div>
                     <BookOpen className="h-5 w-5 text-slate-400 group-hover:text-indigo-600 transition-colors" />
@@ -167,17 +185,21 @@ export function LessonsPage() {
                   <h2 className="text-base font-bold text-slate-900 leading-tight mb-2 group-hover:text-indigo-600 transition-colors">
                     {lesson.title}
                   </h2>
-                  <p className="text-xs text-slate-500 line-clamp-2 mb-4">
+                  <p className="text-xs text-slate-500 line-clamp-2 mb-4 flex-1">
                     {lesson.questions.split("?")[0] ?? lesson.title}
                   </p>
-                  <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100">
+                  <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100 mt-auto">
                     {lesson.tags.slice(0, 3).map((tag) => (
-                      <span
+                      <button
                         key={tag}
-                        className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-50 text-slate-600 border border-slate-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate({ to: "/lessons", search: { q: tag } });
+                        }}
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${getTagColor(tag)} hover:opacity-80 transition-opacity cursor-pointer`}
                       >
                         {tag}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </div>
