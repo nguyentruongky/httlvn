@@ -16,7 +16,7 @@ import { api } from "@/lib/api";
 const navItems = [
   { to: "/", label: "Tổng quan", icon: LayoutDashboard },
   { to: "/churches", label: "Hội Thánh", icon: Church },
-  { to: "/departments", label: "Ban ngành", icon: Layers },
+  // { to: "/departments", label: "Ban ngành", icon: Layers },
   { to: "/giao-pham", label: "Giáo phẩm", icon: UserCheck },
   { to: "/lessons", label: "Bài học", icon: BookOpen },
 ] as const;
@@ -50,7 +50,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <p className="font-bold text-sm tracking-tight text-slate-900">
-              HTKV TP.HCM
+              Ban Đại diện Tin Lành TP. HCM
             </p>
             <p className="text-[11px] text-slate-500">
               Quản Trị Hội Thánh 2026
@@ -99,7 +99,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ShieldCheck className="h-4 w-4" />
           </div>
           <span className="font-bold text-base tracking-tight">
-            HTKV TP.HCM
+            Ban Đại diện Tin Lành TP. HCM
           </span>
         </div>
         <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">

@@ -15,6 +15,9 @@
     "db:generate": "bunx drizzle-kit generate",
     "db:seed": "bun run src/db/seed.ts",
     "db:seed-lessons": "bun run src/db/seed-lessons.ts",
+    "db:seed-lessons-prod": "bun run scripts/seed-lessons-to-production.ts",
+    "db:pull-lessons": "bun run scripts/pull-lessons-from-production.ts",
+    "db:pull-prod": "bun run scripts/pull-production.ts",
     "db:seed-prod": "bun run scripts/seed-to-production.ts",
     "db:studio": "bunx drizzle-kit studio"
   },

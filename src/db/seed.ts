@@ -6,7 +6,6 @@ import rawSeedRecords from './seed-data.json';
 import { removeVietnameseDiacritics } from '../lib/vietnamese';
 
 interface RawChurchSeed {
-  stt: number;
   form: string;
   legalType: string;
   autonomy: string | null;
@@ -25,6 +24,7 @@ interface RawChurchSeed {
   memberCount: number;
   note: string | null;
   isInHcm: boolean;
+  province?: string;
 }
 
 const REGION_METADATA: Record<string, { name: string; areaDescription: string; coordinatorName: string }> = {
@@ -302,64 +302,51 @@ async function seed() {
     }
   }
 
-  // 4. First Pass: Insert / Upsert all 172 Churches
+  // 4. First Pass: Insert / Upsert all Churches
   const churchIdByShortName = new Map<string, number>();
-  const churchIdByStt = new Map<number, number>();
 
   for (const rec of records) {
     const regionId = regionIdByCode.get(rec.regionCode) ?? regionIdByCode.get('I')!;
-    const prefix =
-      rec.form === 'Chi hội' ? 'CH' : rec.form === 'Hội nhánh' ? 'HN' : 'DN';
-    const code = `${prefix}-${String(rec.stt).padStart(3, '0')}`;
+    
+    // For branches (Điểm nhóm, Hội nhánh), make name unique by including parent name
+    let uniqueName = rec.name;
+    if (rec.parentName && (rec.form === 'Điểm nhóm' || rec.form === 'Hội nhánh')) {
+      uniqueName = `${rec.name} (${rec.parentName})`;
+    }
 
     const [upserted] = await db
       .insert(schema.churches)
       .values({
-        stt: rec.stt,
-        code,
         form: rec.form,
         legalType: rec.legalType,
         autonomy: rec.autonomy,
-        name: rec.name,
-        shortName: rec.shortName,
-        parentChurchName: rec.parentName,
+        name: uniqueName,
         regionId,
         foundedYear: rec.foundedYear,
-        oldWard: rec.oldWard,
-        oldAddress: rec.oldAddress,
         newAddress: rec.newAddress,
         newWard: rec.newWard,
-        isInHcm: rec.isInHcm,
+        province: rec.province ?? (rec.isInHcm ? 'TP. HCM' : null),
         memberCount: rec.memberCount,
         note: rec.note,
       })
       .onConflictDoUpdate({
-        target: schema.churches.stt,
+        target: schema.churches.name,
         set: {
           form: rec.form,
           legalType: rec.legalType,
           autonomy: rec.autonomy,
-          name: rec.name,
-          shortName: rec.shortName,
-          parentChurchName: rec.parentName,
           regionId,
           foundedYear: rec.foundedYear,
-          oldWard: rec.oldWard,
-          oldAddress: rec.oldAddress,
           newAddress: rec.newAddress,
           newWard: rec.newWard,
-          isInHcm: rec.isInHcm,
+          province: rec.province ?? (rec.isInHcm ? 'TP. HCM' : null),
           memberCount: rec.memberCount,
           note: rec.note,
         },
       })
       .returning();
 
-    churchIdByStt.set(rec.stt, upserted.id);
-    if (rec.form === 'Chi hội') {
-      churchIdByShortName.set(rec.shortName.toUpperCase(), upserted.id);
-      churchIdByShortName.set(rec.name.toUpperCase(), upserted.id);
-    }
+    churchIdByShortName.set(rec.name.toUpperCase(), upserted.id);
   }
 
   // 5. Second Pass: Link Parent Mother Churches (CH trực thuộc) & Pastoral Assignments
@@ -369,15 +356,24 @@ async function seed() {
   let linkedPastors = 0;
 
   for (const rec of records) {
-    const churchId = churchIdByStt.get(rec.stt)!;
+    // Use same unique name logic as first pass
+    let uniqueName = rec.name;
+    if (rec.parentName && (rec.form === 'Điểm nhóm' || rec.form === 'Hội nhánh')) {
+      uniqueName = `${rec.name} (${rec.parentName})`;
+    }
+    const churchId = churchIdByShortName.get(uniqueName.toUpperCase());
+
+    if (!churchId) continue;
 
     if (rec.parentName) {
       const parentId = churchIdByShortName.get(rec.parentName.toUpperCase());
       if (parentId && parentId !== churchId) {
-        await db
-          .update(schema.churches)
-          .set({ parentChurchId: parentId })
-          .where(eq(schema.churches.id, churchId));
+        // Create branch record instead of parent_church_id
+        await db.insert(schema.churchBranches).values({
+          parentChurchId: parentId,
+          childChurchId: churchId,
+          branchName: rec.name,
+        }).onConflictDoNothing();
         linkedParents++;
       }
     }
@@ -418,7 +414,8 @@ async function seed() {
   // 7. Seed sample local department assignments for major Chi hội
   const majorChurches = records.filter((r) => r.form === 'Chi hội' && r.memberCount >= 300).slice(0, 10);
   for (const mc of majorChurches) {
-    const cId = churchIdByStt.get(mc.stt)!;
+    const cId = churchIdByShortName.get(mc.name.toUpperCase());
+    if (!cId) continue;
     for (const dept of seededDepts.slice(0, 4)) {
       await db
         .insert(schema.churchDepartments)

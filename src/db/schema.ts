@@ -38,12 +38,14 @@ export const pastors = pgTable('pastors', {
   namSinh: integer('nam_sinh'),
   tenNhiemSo: text('ten_nhiem_so'),
   diaChi: text('dia_chi'),
+  regionId: integer('region_id').references(() => regions.id, { onDelete: 'set null' }),
   searchText: text('search_text'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   nameIdx: index('pastors_name_idx').on(table.fullName),
   searchIdx: index('pastors_search_idx').on(table.searchText),
   statusIdx: index('pastors_status_idx').on(table.status),
+  regionIdx: index('pastors_region_idx').on(table.regionId),
 }));
 
 export const pastorNhuDanh = pgTable('pastor_nhu_danh', {
@@ -57,36 +59,38 @@ export const pastorNhuDanh = pgTable('pastor_nhu_danh', {
 
 export const churches = pgTable('churches', {
   id: serial('id').primaryKey(),
-  stt: integer('stt').notNull().unique(),
-  code: text('code').notNull().unique(),
   form: text('form').notNull().default('Chi hội'),
   legalType: text('legal_type').notNull().default('Chính thức'),
   autonomy: text('autonomy'),
   name: text('name').notNull(),
-  shortName: text('short_name').notNull(),
-  parentChurchName: text('parent_church_name'),
-  parentChurchId: integer('parent_church_id'),
   regionId: integer('region_id')
-    .notNull()
     .references(() => regions.id, { onDelete: 'restrict' }),
-  wardId: integer('ward_id').references(() => administrativeWards.id, {
-    onDelete: 'set null',
-  }),
   foundedYear: integer('founded_year'),
-  oldDistrict: text('old_district'),
-  oldWard: text('old_ward'),
-  oldAddress: text('old_address'),
   newAddress: text('new_address'),
   newWard: text('new_ward'),
-  isInHcm: boolean('is_in_hcm').notNull().default(true),
+  province: text('province'),
   memberCount: integer('member_count').notNull().default(0),
   regularAttendanceCount: integer('regular_attendance_count').notNull().default(0),
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   regionIdx: index('churches_region_idx').on(table.regionId),
-  isInHcmIdx: index('churches_is_in_hcm_idx').on(table.isInHcm),
   nameIdx: index('churches_name_idx').on(table.name),
+}));
+
+export const churchBranches = pgTable('church_branches', {
+  id: serial('id').primaryKey(),
+  parentChurchId: integer('parent_church_id')
+    .notNull()
+    .references(() => churches.id, { onDelete: 'cascade' }),
+  childChurchId: integer('child_church_id')
+    .notNull()
+    .references(() => churches.id, { onDelete: 'cascade' }),
+  branchName: text('branch_name'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  parentIdx: index('church_branches_parent_idx').on(table.parentChurchId),
+  childIdx: index('church_branches_child_idx').on(table.childChurchId),
 }));
 
 export const pastoralAssignments = pgTable('pastoral_assignments', {

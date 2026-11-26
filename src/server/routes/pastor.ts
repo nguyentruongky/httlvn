@@ -198,14 +198,15 @@ export const pastorRoute = new Hono().get('/', async (c) => {
     .from(pastors)
     .where(whereClause)
     .orderBy(
-      // Sort: HCM first, then by last name
+      // Sort: HCM first, then by last name, then by ID for stable pagination
       sql`case when exists (
         select 1 from pastoral_assignments pa
         join churches ch on pa.church_id = ch.id
         where pa.pastor_id = ${pastors.id}
-        and ch.is_in_hcm = true
+        and ch.province = 'TP. HCM'
       ) then 0 else 1 end`,
       sql`split_part(trim(${pastors.fullName}), ' ', array_length(string_to_array(trim(${pastors.fullName}), ' '), 1))`,
+      sql`${pastors.id}`,
     )
     .limit(limit)
     .offset(offset);
@@ -293,6 +294,7 @@ export const pastorRoute = new Hono().get('/', async (c) => {
       });
 
     return {
+      id: p.id,
       name: parsed.name,
       title: p.title,
       phone: normalizePhone(p.phone),

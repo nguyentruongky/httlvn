@@ -23,14 +23,14 @@ type LessonsResponse = {
 };
 
 const tagColors = [
-  'bg-indigo-100 text-indigo-700',
-  'bg-emerald-100 text-emerald-700',
-  'bg-amber-100 text-amber-700',
-  'bg-rose-100 text-rose-700',
-  'bg-violet-100 text-violet-700',
-  'bg-cyan-100 text-cyan-700',
-  'bg-orange-100 text-orange-700',
-  'bg-pink-100 text-pink-700',
+  "bg-indigo-100 text-indigo-700",
+  "bg-emerald-100 text-emerald-700",
+  "bg-amber-100 text-amber-700",
+  "bg-rose-100 text-rose-700",
+  "bg-violet-100 text-violet-700",
+  "bg-cyan-100 text-cyan-700",
+  "bg-orange-100 text-orange-700",
+  "bg-pink-100 text-pink-700",
 ];
 
 function getTagColor(tag: string): string {
@@ -131,7 +131,7 @@ export function LessonsPage() {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm bài giảng, chủ đề hoặc câu hỏi..."
+            placeholder="Tìm bài học..."
             className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2.5 text-sm outline-none focus:border-indigo-600 min-h-11"
           />
         </div>
@@ -188,7 +188,7 @@ export function LessonsPage() {
                   <p className="text-xs text-slate-500 line-clamp-2 mb-4 flex-1">
                     {lesson.questions.split("?")[0] ?? lesson.title}
                   </p>
-                  <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100 mt-auto">
+                  <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100">
                     {lesson.tags.slice(0, 3).map((tag) => (
                       <button
                         key={tag}

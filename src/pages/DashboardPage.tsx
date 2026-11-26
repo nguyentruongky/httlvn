@@ -132,7 +132,7 @@ export function DashboardPage() {
             to="/churches"
             className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
           >
-            <span>Danh sách 172 Hội Thánh</span>
+            <span>Danh sách Hội Thánh</span>
           </Link>
         </div>
 

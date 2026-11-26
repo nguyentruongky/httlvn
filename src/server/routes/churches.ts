@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { asc, eq, inArray } from 'drizzle-orm';
+import { asc, eq, inArray, and } from 'drizzle-orm';
 import { db } from '../../db';
-import { churches, regions, pastoralAssignments, pastors } from '../../db/schema';
+import { churches, regions, pastoralAssignments, pastors, churchBranches } from '../../db/schema';
 import { memoryStore } from '../memory-store';
 import { requireAdmin } from '../middleware/auth';
 import { matchesPrefix } from '../../lib/utils';
@@ -41,6 +41,19 @@ const updateChurchSchema = z.object({
 });
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
+
+const assignmentSchema = z.object({
+  pastorId: z.coerce.number().int().positive(),
+  role: z.enum(['Quản nhiệm', 'Kiêm nhiệm', 'Đặc trách', 'Phụ tá']).default('Quản nhiệm'),
+  isPrimary: z.boolean().default(true),
+  assignmentType: z.enum(['church', 'organization', 'other']).default('church'),
+  workName: z.string().max(200).nullable().optional(),
+});
+
+const updateAssignmentSchema = z.object({
+  role: z.enum(['Quản nhiệm', 'Kiêm nhiệm', 'Đặc trách', 'Phụ tá']).optional(),
+  isPrimary: z.boolean().optional(),
+});
 
 export const churchesRoute = new Hono()
   .get('/:id', zValidator('param', idParam), async (c) => {
@@ -147,6 +160,7 @@ export const churchesRoute = new Hono()
     const region = c.req.query('region') || 'ALL';
     const form = c.req.query('form') || 'ALL';
     const legalType = c.req.query('legalType') || 'ALL';
+    const province = c.req.query('province') || 'TP. HCM';
     const q = (c.req.query('q') || '').trim().toLowerCase();
     const page = Math.max(Number(c.req.query('page')) || 1, 1);
     const limit = Math.max(Number(c.req.query('limit')) || 20, 1);
@@ -154,6 +168,9 @@ export const churchesRoute = new Hono()
     if (!db) {
       let list = memoryStore.churches;
 
+      if (province && province !== 'ALL') {
+        list = list.filter((item) => item.province === province);
+      }
       if (region !== 'ALL') {
         list = list.filter((item) => item.regionCode === region);
       }
@@ -197,16 +214,47 @@ export const churchesRoute = new Hono()
       });
     }
 
-    const [allChurches, allRegions, allAssignments, allPastors] = await Promise.all([
-      db.select().from(churches).orderBy(asc(churches.stt)),
+    const [allChurches, allRegions, allAssignments, allPastors, allBranches] = await Promise.all([
+      db.select().from(churches).orderBy(asc(churches.id)),
       db.select().from(regions),
       db.select().from(pastoralAssignments),
       db.select().from(pastors),
+      db.select().from(churchBranches),
     ]);
 
     const regionMap = new Map(allRegions.map((r) => [r.id, r]));
     const pastorMap = new Map(allPastors.map((p) => [p.id, p]));
-    const assignmentByChurch = new Map(allAssignments.map((a) => [a.churchId, a]));
+
+    // Build parent name lookup from churchBranches
+    const churchMap = new Map(allChurches.map((c) => [c.id, c]));
+    const parentNameMap = new Map<number, string>();
+    for (const b of allBranches) {
+      const parent = churchMap.get(b.parentChurchId);
+      if (parent) {
+        parentNameMap.set(b.childChurchId, parent.name);
+      }
+    }
+
+    // Build assignment map prioritizing Quản nhiệm role for each church
+    const assignmentByChurch = new Map<number, typeof allAssignments[0]>();
+    for (const a of allAssignments) {
+      if (!a.churchId) continue;
+      const existing = assignmentByChurch.get(a.churchId);
+      if (!existing) {
+        assignmentByChurch.set(a.churchId, a);
+      } else {
+        // Prefer Quản nhiệm over other roles, and isPrimary over non-primary
+        const existingIsQuanNhiem = existing.role === 'Quản nhiệm';
+        const currentIsQuanNhiem = a.role === 'Quản nhiệm';
+        if (currentIsQuanNhiem && !existingIsQuanNhiem) {
+          assignmentByChurch.set(a.churchId, a);
+        } else if (currentIsQuanNhiem === existingIsQuanNhiem) {
+          if (a.isPrimary && !existing.isPrimary) {
+            assignmentByChurch.set(a.churchId, a);
+          }
+        }
+      }
+    }
 
     const childCountMap = new Map<number, number>();
     for (const item of allChurches) {
@@ -222,6 +270,7 @@ export const churchesRoute = new Hono()
       const reg = regionMap.get(item.regionId);
       const assign = assignmentByChurch.get(item.id);
       const pastor = assign ? pastorMap.get(assign.pastorId) : undefined;
+      const parentName = parentNameMap.get(item.id) ?? null;
 
       return {
         id: item.id,
@@ -233,7 +282,7 @@ export const churchesRoute = new Hono()
         name: item.name,
         shortName: item.shortName,
         parentChurchId: item.parentChurchId,
-        parentChurchName: item.parentChurchName,
+        parentChurchName: parentName,
         regionCode: reg?.code ?? 'I',
         regionName: reg?.name ?? 'Khu vực I',
         foundedYear: item.foundedYear,
@@ -241,6 +290,7 @@ export const churchesRoute = new Hono()
         oldAddress: item.oldAddress,
         newAddress: item.newAddress,
         newWard: item.newWard,
+        province: item.province,
         isInHcm: item.isInHcm,
         memberCount: item.memberCount,
         regularAttendanceCount: item.regularAttendanceCount,
@@ -255,6 +305,7 @@ export const churchesRoute = new Hono()
       };
     });
 
+    if (province && province !== 'ALL') list = list.filter((x) => x.province === province);
     if (region !== 'ALL') list = list.filter((x) => x.regionCode === region);
     if (form !== 'ALL') list = list.filter((x) => x.form === form);
     if (legalType !== 'ALL') list = list.filter((x) => x.legalType === legalType);
@@ -262,7 +313,8 @@ export const churchesRoute = new Hono()
       list = list.filter(
         (item) =>
           matchesPrefix(item.name, q) ||
-          (item.pastorName && matchesPrefix(item.pastorName, q))
+          (item.pastorName && matchesPrefix(item.pastorName, q)) ||
+          (item.parentChurchName && matchesPrefix(item.parentChurchName, q))
       );
     }
 
@@ -388,5 +440,159 @@ export const churchesRoute = new Hono()
 
       if (!updated) return c.json({ error: 'Congregation not found' }, 404);
       return c.json({ church: updated });
+    }
+  )
+  // Get pastors for a church
+  .get('/:id/pastors', zValidator('param', idParam), async (c) => {
+    const { id } = c.req.valid('param');
+
+    if (!db) return c.json({ error: 'Database not available' }, 500);
+
+    const assignments = await db
+      .select()
+      .from(pastoralAssignments)
+      .where(eq(pastoralAssignments.churchId, id));
+
+    const pastorIds = assignments.map((a) => a.pastorId);
+    const allPastors =
+      pastorIds.length > 0
+        ? await db.select().from(pastors).where(inArray(pastors.id, pastorIds))
+        : [];
+
+    const pastorMap = new Map(allPastors.map((p) => [p.id, p]));
+
+    return c.json({
+      pastors: assignments.map((a) => {
+        const p = pastorMap.get(a.pastorId);
+        return {
+          id: p?.id ?? null,
+          name: p?.fullName ?? 'Unknown',
+          title: p?.title ?? null,
+          phone: p?.phone ?? null,
+          role: a.role,
+          isPrimary: a.isPrimary,
+          assignmentType: a.assignmentType,
+          workName: a.workName,
+        };
+      }),
+    });
+  })
+  // Add pastor to church
+  .post(
+    '/:id/pastors',
+    requireAdmin(),
+    zValidator('param', idParam),
+    zValidator('json', assignmentSchema),
+    async (c) => {
+      const { id } = c.req.valid('param');
+      const body = c.req.valid('json');
+
+      if (!db) return c.json({ error: 'Database not available' }, 500);
+
+      const [church] = await db.select().from(churches).where(eq(churches.id, id));
+      if (!church) return c.json({ error: 'Congregation not found' }, 404);
+
+      const [pastor] = await db.select().from(pastors).where(eq(pastors.id, body.pastorId));
+      if (!pastor) return c.json({ error: 'Pastor not found' }, 404);
+
+      // If adding a Quản nhiệm, ensure only one exists
+      if (body.role === 'Quản nhiệm' && body.isPrimary) {
+        await db
+          .update(pastoralAssignments)
+          .set({ isPrimary: false })
+          .where(
+            and(
+              eq(pastoralAssignments.churchId, id),
+              eq(pastoralAssignments.role, 'Quản nhiệm'),
+            ),
+          );
+      }
+
+      const [assignment] = await db
+        .insert(pastoralAssignments)
+        .values({
+          churchId: id,
+          pastorId: body.pastorId,
+          role: body.role,
+          isPrimary: body.isPrimary,
+          assignmentType: body.assignmentType,
+          workName: body.workName,
+        })
+        .returning();
+
+      return c.json({ assignment }, 201);
+    }
+  )
+  // Update pastor assignment
+  .patch(
+    '/:id/pastors/:assignmentId',
+    requireAdmin(),
+    zValidator('param', idParam.extend({ assignmentId: z.coerce.number().int().positive() })),
+    zValidator('json', updateAssignmentSchema),
+    async (c) => {
+      const { id, assignmentId } = c.req.valid('param');
+      const body = c.req.valid('json');
+
+      if (!db) return c.json({ error: 'Database not available' }, 500);
+
+      const [assignment] = await db
+        .select()
+        .from(pastoralAssignments)
+        .where(
+          and(
+            eq(pastoralAssignments.id, assignmentId),
+            eq(pastoralAssignments.churchId, id),
+          ),
+        );
+
+      if (!assignment) return c.json({ error: 'Assignment not found' }, 404);
+
+      // If setting as Quản nhiệm and primary, unset others
+      if (body.role === 'Quản nhiệm' && body.isPrimary) {
+        await db
+          .update(pastoralAssignments)
+          .set({ isPrimary: false })
+          .where(
+            and(
+              eq(pastoralAssignments.churchId, id),
+              eq(pastoralAssignments.role, 'Quản nhiệm'),
+            ),
+          );
+      }
+
+      const [updated] = await db
+        .update(pastoralAssignments)
+        .set(body)
+        .where(eq(pastoralAssignments.id, assignmentId))
+        .returning();
+
+      return c.json({ assignment: updated });
+    }
+  )
+  // Remove pastor from church
+  .delete(
+    '/:id/pastors/:assignmentId',
+    requireAdmin(),
+    zValidator('param', idParam.extend({ assignmentId: z.coerce.number().int().positive() })),
+    async (c) => {
+      const { id, assignmentId } = c.req.valid('param');
+
+      if (!db) return c.json({ error: 'Database not available' }, 500);
+
+      const [assignment] = await db
+        .select()
+        .from(pastoralAssignments)
+        .where(
+          and(
+            eq(pastoralAssignments.id, assignmentId),
+            eq(pastoralAssignments.churchId, id),
+          ),
+        );
+
+      if (!assignment) return c.json({ error: 'Assignment not found' }, 404);
+
+      await db.delete(pastoralAssignments).where(eq(pastoralAssignments.id, assignmentId));
+
+      return c.json({ success: true });
     }
   );

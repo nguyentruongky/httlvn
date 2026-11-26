@@ -1,5 +1,10 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  useInfiniteQuery,
+} from "@tanstack/react-query";
 import {
   Search,
   MoreVertical,
@@ -9,6 +14,7 @@ import {
   GitBranch,
   User,
   Calendar,
+  X,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { api } from "@/lib/api";
@@ -62,6 +68,13 @@ export function ChurchesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [showPastorManager, setShowPastorManager] = useState(false);
+  const [availablePastors, setAvailablePastors] = useState<any[]>([]);
+  const [pastorSearch, setPastorSearch] = useState("");
+  const [selectedPastorId, setSelectedPastorId] = useState<number | null>(null);
+  const [newPastorRole, setNewPastorRole] = useState<
+    "Quản nhiệm" | "Kiêm nhiệm" | "Đặc trách" | "Phụ tá"
+  >("Quản nhiệm");
 
   // Edit form state
   const [editName, setEditName] = useState("");
@@ -99,6 +112,120 @@ export function ChurchesPage() {
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
+  // Fetch available pastors for assignment
+  const fetchAvailablePastors = async () => {
+    try {
+      const res = await api.api["giao-pham"].$get({
+        query: { limit: "200", q: pastorSearch },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setAvailablePastors(json.pastor ?? []);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      fetchAvailablePastors();
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [pastorSearch]);
+
+  // Pastor assignment mutations
+  const addPastorMutation = useMutation({
+    mutationFn: async ({
+      churchId,
+      pastorId,
+      role,
+    }: {
+      churchId: number;
+      pastorId: number;
+      role: string;
+    }) => {
+      const res = await api.api.churches[":id"]["pastors"].$post({
+        param: { id: String(churchId) },
+        json: { pastorId, role, isPrimary: true, assignmentType: "church" },
+      });
+      if (!res.ok) throw new Error("Failed to add pastor");
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      if (selectedChurch && selectedChurch.id === vars.churchId) {
+        refreshChurchPastors(vars.churchId);
+      }
+      queryClient.invalidateQueries({ queryKey: ["churches"] });
+      queryClient.invalidateQueries({ queryKey: ["pastor"] });
+    },
+  });
+
+  const updatePastorAssignmentMutation = useMutation({
+    mutationFn: async ({
+      churchId,
+      assignmentId,
+      role,
+      isPrimary,
+    }: {
+      churchId: number;
+      assignmentId: number;
+      role?: string;
+      isPrimary?: boolean;
+    }) => {
+      const res = await api.api.churches[":id"]["pastors"][
+        ":assignmentId"
+      ].$patch({
+        param: { id: String(churchId), assignmentId: String(assignmentId) },
+        json: { role, isPrimary },
+      });
+      if (!res.ok) throw new Error("Failed to update assignment");
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      if (selectedChurch && selectedChurch.id === vars.churchId) {
+        refreshChurchPastors(vars.churchId);
+      }
+      queryClient.invalidateQueries({ queryKey: ["churches"] });
+      queryClient.invalidateQueries({ queryKey: ["pastor"] });
+    },
+  });
+
+  const removePastorMutation = useMutation({
+    mutationFn: async ({
+      churchId,
+      assignmentId,
+    }: {
+      churchId: number;
+      assignmentId: number;
+    }) => {
+      const res = await api.api.churches[":id"]["pastors"][
+        ":assignmentId"
+      ].$delete({
+        param: { id: String(churchId), assignmentId: String(assignmentId) },
+      });
+      if (!res.ok) throw new Error("Failed to remove pastor");
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      if (selectedChurch && selectedChurch.id === vars.churchId) {
+        refreshChurchPastors(vars.churchId);
+      }
+      queryClient.invalidateQueries({ queryKey: ["churches"] });
+      queryClient.invalidateQueries({ queryKey: ["pastor"] });
+    },
+  });
+
+  const refreshChurchPastors = async (churchId: number) => {
+    try {
+      const res = await api.api.churches[":id"]["pastors"].$get({
+        param: { id: String(churchId) },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setChurchPastors(json.pastors ?? []);
+      }
+    } catch {}
+  };
+
   useEffect(() => {
     return () => {
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
@@ -115,7 +242,9 @@ export function ChurchesPage() {
       setEditFoundedYear(selectedChurch.foundedYear?.toString() ?? "");
       setEditNote(selectedChurch.note ?? "");
       setEditMemberCount(selectedChurch.memberCount.toString());
-      setEditRegularAttendance(selectedChurch.regularAttendanceCount.toString());
+      setEditRegularAttendance(
+        selectedChurch.regularAttendanceCount.toString(),
+      );
     }
   }, [selectedChurch, isEditing]);
 
@@ -128,7 +257,7 @@ export function ChurchesPage() {
 
   const exportToExcel = () => {
     const rows = churchList.map((ch) => ({
-      "Mã": ch.code,
+      Mã: ch.code,
       "Tên Hội Thánh": ch.name,
       "Khu vực": ch.regionCode,
       "Hình thức": ch.form,
@@ -143,7 +272,10 @@ export function ChurchesPage() {
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Danh bộ Hội Thánh");
-    XLSX.writeFile(workbook, `danh-bo-hoi-thanh-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(
+      workbook,
+      `danh-bo-hoi-thanh-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    );
   };
 
   const printList = () => {
@@ -182,7 +314,7 @@ export function ChurchesPage() {
                     <td>${ch.pastorName ?? ""}</td>
                     <td>${ch.memberCount}</td>
                     <td>${ch.regularAttendanceCount}</td>
-                  </tr>`
+                  </tr>`,
                 )
                 .join("")}
             </tbody>
@@ -202,31 +334,26 @@ export function ChurchesPage() {
     hasMore: boolean;
   };
 
-  const {
-    data,
-    isPending,
-    isFetching,
-    fetchNextPage,
-    hasNextPage,
-  } = useInfiniteQuery<ChurchPage>({
-    queryKey: ["churches", regionFilter, formFilter, debouncedSearch],
-    queryFn: async ({ pageParam = 1 }) => {
-      const res = await api.api.churches.$get({
-        query: {
-          region: regionFilter,
-          form: formFilter,
-          limit: "20",
-          page: String(pageParam),
-          q: debouncedSearch,
-        },
-      });
-      if (!res.ok) throw new Error("Failed to load congregations");
-      return (await res.json()) as ChurchPage;
-    },
-    initialPageParam: 1,
-    getNextPageParam: (lastPage: ChurchPage) =>
-      lastPage.hasMore ? lastPage.page + 1 : undefined,
-  });
+  const { data, isPending, isFetching, fetchNextPage, hasNextPage } =
+    useInfiniteQuery<ChurchPage>({
+      queryKey: ["churches", regionFilter, formFilter, debouncedSearch],
+      queryFn: async ({ pageParam = 1 }) => {
+        const res = await api.api.churches.$get({
+          query: {
+            region: regionFilter,
+            form: formFilter,
+            limit: "20",
+            page: String(pageParam),
+            q: debouncedSearch,
+          },
+        });
+        if (!res.ok) throw new Error("Failed to load congregations");
+        return (await res.json()) as ChurchPage;
+      },
+      initialPageParam: 1,
+      getNextPageParam: (lastPage: ChurchPage) =>
+        lastPage.hasMore ? lastPage.page + 1 : undefined,
+    });
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -248,7 +375,8 @@ export function ChurchesPage() {
       if (!query) return true;
       return (
         matchesPrefix(church.name, query) ||
-        matchesPrefix(church.pastorName, query)
+        matchesPrefix(church.pastorName, query) ||
+        matchesPrefix(church.parentChurchName, query)
       );
     });
   }, [data, debouncedSearch]);
@@ -376,133 +504,6 @@ export function ChurchesPage() {
       },
     });
   };
-
-  const editChurchForm = (
-    <div className="rounded-xl border border-slate-200/80 p-4 space-y-4 mt-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-900">
-          Chỉnh sửa thông tin
-        </h3>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setIsEditing(false)}
-        >
-          Hủy
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={handleSaveChurch}
-          disabled={updateChurchDetailsMutation.isPending}
-        >
-          {updateChurchDetailsMutation.isPending
-            ? "Đang lưu..."
-            : "Lưu thay đổi"}
-        </Button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Tên Hội Thánh
-          </label>
-          <input
-            type="text"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Tên viết tắt
-          </label>
-          <input
-            type="text"
-            value={editShortName}
-            onChange={(e) => setEditShortName(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Địa chỉ mới (2026)
-          </label>
-          <input
-            type="text"
-            value={editNewAddress}
-            onChange={(e) => setEditNewAddress(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Phường / Xã
-          </label>
-          <input
-            type="text"
-            value={editNewWard}
-            onChange={(e) => setEditNewWard(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Địa chỉ cũ
-          </label>
-          <input
-            type="text"
-            value={editOldAddress}
-            onChange={(e) => setEditOldAddress(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Năm thành lập
-          </label>
-          <input
-            type="number"
-            value={editFoundedYear}
-            onChange={(e) => setEditFoundedYear(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Số tín hữu
-          </label>
-          <input
-            type="number"
-            value={editMemberCount}
-            onChange={(e) => setEditMemberCount(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Tín hữu trung tín
-          </label>
-          <input
-            type="number"
-            value={editRegularAttendance}
-            onChange={(e) => setEditRegularAttendance(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-            Ghi chú
-          </label>
-          <textarea
-            value={editNote}
-            onChange={(e) => setEditNote(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 min-h-[80px]"
-          />
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <div className="space-y-5">
@@ -778,320 +779,511 @@ export function ChurchesPage() {
       >
         {selectedChurch && (
           <>
-          <div className="space-y-4 text-xs">
-            {isAuthenticated() && (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[10px] font-semibold uppercase text-slate-400 tracking-wider">
-                  Chi tiết Hội Thánh
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setIsEditing(true);
-                  }}
-                >
-                  {isEditing ? "Đang chỉnh sửa..." : "Sửa thông tin"}
-                </Button>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-2.5">
-              {selectedChurch.legalType !== "Cơ quan" && (
-                <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-slate-400">Pháp lý & Tự trị</p>
-                  <p className="mt-1 font-bold text-slate-900">
-                    {selectedChurch.legalType}
-                    {selectedChurch.autonomy
-                      ? ` · ${selectedChurch.autonomy}`
-                      : ""}
-                  </p>
+            <div className="space-y-4 text-xs">
+              {isAuthenticated() && (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[10px] font-semibold uppercase text-slate-400 tracking-wider">
+                    Chi tiết Hội Thánh
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setIsEditing(true);
+                    }}
+                  >
+                    {isEditing ? "Đang chỉnh sửa..." : "Sửa thông tin"}
+                  </Button>
                 </div>
               )}
-              {(selectedChurch.form === "Chi hội" ||
-                selectedChurch.form === "Hội nhánh" ||
-                selectedChurch.form === "Điểm nhóm") && (
-                <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-slate-400">Năm thành lập</p>
-                  <p className="mt-1 font-bold text-slate-900 flex items-center gap-1">
-                    <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                    {selectedChurch.foundedYear ?? "Chưa cập nhật"}
-                  </p>
-                </div>
-              )}
-              {(selectedChurch.form === "Chi hội" ||
-                selectedChurch.form === "Hội nhánh" ||
-                selectedChurch.form === "Điểm nhóm") && (
-                <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-slate-400">Khu vực</p>
-                  <p className="mt-1 font-bold text-slate-900 flex items-center gap-1">
-                    <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                    {selectedChurch.regionName ?? "Khu vực I"}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {(selectedChurch.form === "Chi hội" ||
-              selectedChurch.form === "Hội nhánh" ||
-              selectedChurch.form === "Điểm nhóm") && (
-              <div className="rounded-xl border border-slate-200/80 p-3.5 space-y-2">
-                <div>
-                  <p className="text-[11px] font-semibold text-indigo-600 uppercase">
-                    Địa chỉ sau sáp nhập 2026
-                  </p>
-                  <p className="mt-0.5 text-sm font-medium text-slate-900">
-                    {selectedChurch.newAddress ? (
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedChurch.newAddress)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="cursor-pointer"
-                      >
-                        {selectedChurch.newAddress}
-                      </a>
-                    ) : (
-                      "—"
-                    )}
-                  </p>
-                </div>
-
-                {selectedChurch.oldAddress && (
-                  <div className="pt-2 border-t border-slate-100">
-                    <p className="text-[11px] font-semibold text-slate-400 uppercase">
-                      Địa chỉ cũ
+              <div className="grid grid-cols-2 gap-2.5">
+                {selectedChurch.legalType !== "Cơ quan" && (
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="text-slate-400">Pháp lý & Tự trị</p>
+                    <p className="mt-1 font-bold text-slate-900">
+                      {selectedChurch.legalType}
+                      {selectedChurch.autonomy
+                        ? ` · ${selectedChurch.autonomy}`
+                        : ""}
                     </p>
-                    <p className="mt-0.5 text-slate-700">
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedChurch.oldAddress)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="cursor-pointer"
-                      >
-                        {selectedChurch.oldAddress}
-                      </a>
+                  </div>
+                )}
+                {(selectedChurch.form === "Chi hội" ||
+                  selectedChurch.form === "Hội nhánh" ||
+                  selectedChurch.form === "Điểm nhóm") && (
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="text-slate-400">Năm thành lập</p>
+                    <p className="mt-1 font-bold text-slate-900 flex items-center gap-1">
+                      <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                      {selectedChurch.foundedYear ?? "Chưa cập nhật"}
+                    </p>
+                  </div>
+                )}
+                {(selectedChurch.form === "Chi hội" ||
+                  selectedChurch.form === "Hội nhánh" ||
+                  selectedChurch.form === "Điểm nhóm") && (
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="text-slate-400">Khu vực</p>
+                    <p className="mt-1 font-bold text-slate-900 flex items-center gap-1">
+                      <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                      {selectedChurch.regionName ?? "Khu vực I"}
                     </p>
                   </div>
                 )}
               </div>
-            )}
 
-            {(selectedChurch.form === "Chi hội" ||
-              selectedChurch.form === "Hội nhánh" ||
-              selectedChurch.form === "Điểm nhóm") && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-slate-200/80 p-3.5">
-                  <p className="text-[11px] font-semibold uppercase text-slate-400">
-                    Số tín hữu
-                  </p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      type="number"
-                      value={selectedChurch.memberCount}
-                      onChange={(e) => {
-                        const v = Math.max(0, Number(e.target.value) || 0);
-                        setSelectedChurch({
-                          ...selectedChurch,
-                          memberCount: v,
-                        });
-                        updateMembersMutation.mutate({
-                          id: selectedChurch.id,
-                          memberCount: v,
-                          regularAttendanceCount:
-                            selectedChurch.regularAttendanceCount,
-                        });
-                      }}
-                      className="w-full text-lg font-bold text-slate-900 border-none bg-transparent focus:ring-0 text-right"
-                    />
+              {(selectedChurch.form === "Chi hội" ||
+                selectedChurch.form === "Hội nhánh" ||
+                selectedChurch.form === "Điểm nhóm") && (
+                <div className="rounded-xl border border-slate-200/80 p-3.5 space-y-2">
+                  <div>
+                    <p className="text-[11px] font-semibold text-indigo-600 uppercase">
+                      Địa chỉ sau sáp nhập 2026
+                    </p>
+                    <p className="mt-0.5 text-sm font-medium text-slate-900">
+                      {selectedChurch.newAddress ? (
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedChurch.newAddress)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="cursor-pointer"
+                        >
+                          {selectedChurch.newAddress}
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </p>
+                  </div>
+
+                  {selectedChurch.oldAddress && (
+                    <div className="pt-2 border-t border-slate-100">
+                      <p className="text-[11px] font-semibold text-slate-400 uppercase">
+                        Địa chỉ cũ
+                      </p>
+                      <p className="mt-0.5 text-slate-700">
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedChurch.oldAddress)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="cursor-pointer"
+                        >
+                          {selectedChurch.oldAddress}
+                        </a>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(selectedChurch.form === "Chi hội" ||
+                selectedChurch.form === "Hội nhánh" ||
+                selectedChurch.form === "Điểm nhóm") && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-xl border border-slate-200/80 p-3.5">
+                    <p className="text-[11px] font-semibold uppercase text-slate-400">
+                      Số tín hữu
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={selectedChurch.memberCount}
+                        onChange={(e) => {
+                          const v = Math.max(0, Number(e.target.value) || 0);
+                          setSelectedChurch({
+                            ...selectedChurch,
+                            memberCount: v,
+                          });
+                          updateMembersMutation.mutate({
+                            id: selectedChurch.id,
+                            memberCount: v,
+                            regularAttendanceCount:
+                              selectedChurch.regularAttendanceCount,
+                          });
+                        }}
+                        className="w-full text-lg font-bold text-slate-900 border-none bg-transparent focus:ring-0 text-right appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200/80 p-3.5">
+                    <p className="text-[11px] font-semibold uppercase text-slate-400">
+                      Tín hữu trung tín
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={selectedChurch.regularAttendanceCount}
+                        onChange={(e) => {
+                          const v = Math.max(0, Number(e.target.value) || 0);
+                          setSelectedChurch({
+                            ...selectedChurch,
+                            regularAttendanceCount: v,
+                          });
+                          updateMembersMutation.mutate({
+                            id: selectedChurch.id,
+                            memberCount: selectedChurch.memberCount,
+                            regularAttendanceCount: v,
+                          });
+                        }}
+                        className="w-full text-lg font-bold text-slate-900 border-none bg-transparent focus:ring-0 text-right"
+                      />
+                    </div>
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-200/80 p-3.5">
-                  <p className="text-[11px] font-semibold uppercase text-slate-400">
-                    Tín hữu trung tín
-                  </p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      type="number"
-                      value={selectedChurch.regularAttendanceCount}
-                      onChange={(e) => {
-                        const v = Math.max(0, Number(e.target.value) || 0);
-                        setSelectedChurch({
-                          ...selectedChurch,
-                          regularAttendanceCount: v,
-                        });
-                        updateMembersMutation.mutate({
-                          id: selectedChurch.id,
-                          memberCount: selectedChurch.memberCount,
-                          regularAttendanceCount: v,
-                        });
-                      }}
-                      className="w-full text-lg font-bold text-slate-900 border-none bg-transparent focus:ring-0 text-right"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
+              )}
 
-            {churchPastors.length > 0 && (
-              <div className="rounded-xl border border-slate-200/80 p-3.5 space-y-2">
-                <p className="text-[11px] font-semibold uppercase text-slate-400">
-                  Nhân sự
-                </p>
-                <div className="space-y-2">
-                  {churchPastors.map((p) => (
-                    <div
-                      key={p.id || p.name}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 hover:bg-slate-50 transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2">
-                        <User className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
-                        <div>
-                          {p.title ? (
-                            <div className="text-[11px] text-slate-500">
-                              {p.title}
+              {churchPastors.length > 0 && (
+                <div className="rounded-xl border border-slate-200/80 p-3.5 space-y-2">
+                  <p className="text-[11px] font-semibold uppercase text-slate-400">
+                    Giáo phẩm
+                  </p>
+                  <div className="space-y-2">
+                    {(() => {
+                      // Sort: Quản nhiệm first, then by last name
+                      const sorted = [...churchPastors].sort((a, b) => {
+                        const aIsQuanNhiem = a.role === "Quản nhiệm";
+                        const bIsQuanNhiem = b.role === "Quản nhiệm";
+                        if (aIsQuanNhiem !== bIsQuanNhiem)
+                          return aIsQuanNhiem ? -1 : 1;
+                        // Sort by last word of name
+                        const aLast = a.name.trim().split(/\s+/).pop() ?? "";
+                        const bLast = b.name.trim().split(/\s+/).pop() ?? "";
+                        return aLast.localeCompare(bLast, "vi", {
+                          sensitivity: "base",
+                        });
+                      });
+                      return sorted.map((p) => (
+                        <div
+                          key={p.id || p.name}
+                          className="flex items-center justify-between gap-3 rounded-lgbg-white py-3 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <User className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                            <div>
+                              {p.title ? (
+                                <div className="text-[11px] text-slate-500">
+                                  {p.title}
+                                </div>
+                              ) : null}
+                              <div className="text-sm font-medium text-slate-900">
+                                {p.name}
+                              </div>
                             </div>
-                          ) : null}
-                          <div className="text-sm font-medium text-slate-900">
-                            {p.name}
+                          </div>
+                          <div className="text-right">
+                            <span className="shrink-0 rounded bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                              {p.role}
+                            </span>
                           </div>
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="shrink-0 rounded bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                          {p.role}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                      ));
+                    })()}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-          <div className={isEditing ? "" : "hidden"}>
-            <div className="rounded-xl border border-slate-200/80 p-4 space-y-4 mt-4">
-              <div className="flex items-center justify-between mb-3">
+              )}
+            </div>
+            <div className={isEditing ? "" : "hidden"}>
+              <div className="rounded-xl border border-slate-200/80 p-4 space-y-4 mt-4">
                 <h3 className="text-sm font-semibold text-slate-900">
                   Chỉnh sửa thông tin
                 </h3>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsEditing(false)}
-                >
-                  Hủy
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleSaveChurch}
-                  disabled={updateChurchDetailsMutation.isPending}
-                >
-                  {updateChurchDetailsMutation.isPending
-                    ? "Đang lưu..."
-                    : "Lưu thay đổi"}
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Tên Hội Thánh
-                  </label>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Tên viết tắt
-                  </label>
-                  <input
-                    type="text"
-                    value={editShortName}
-                    onChange={(e) => setEditShortName(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Địa chỉ mới (2026)
-                  </label>
-                  <input
-                    type="text"
-                    value={editNewAddress}
-                    onChange={(e) => setEditNewAddress(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Phường / Xã
-                  </label>
-                  <input
-                    type="text"
-                    value={editNewWard}
-                    onChange={(e) => setEditNewWard(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Địa chỉ cũ
-                  </label>
-                  <input
-                    type="text"
-                    value={editOldAddress}
-                    onChange={(e) => setEditOldAddress(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Năm thành lập
-                  </label>
-                  <input
-                    type="number"
-                    value={editFoundedYear}
-                    onChange={(e) => setEditFoundedYear(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Số tín hữu
-                  </label>
-                  <input
-                    type="number"
-                    value={editMemberCount}
-                    onChange={(e) => setEditMemberCount(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Tín hữu trung tín
-                  </label>
-                  <input
-                    type="number"
-                    value={editRegularAttendance}
-                    onChange={(e) => setEditRegularAttendance(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
-                    Ghi chú
-                  </label>
-                  <textarea
-                    value={editNote}
-                    onChange={(e) => setEditNote(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 min-h-[80px]"
-                  />
+                <div className="space-y-3">
+                  <div className="flex gap-3 items-end">
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                        Tên Hội Thánh/Điểm nhóm
+                      </label>
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                    <div className="w-35 shrink-0">
+                      <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                        Năm thành lập
+                      </label>
+                      <input
+                        type="number"
+                        value={editFoundedYear}
+                        onChange={(e) => setEditFoundedYear(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-3 items-end">
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                        Địa chỉ mới (2026)
+                      </label>
+                      <input
+                        type="text"
+                        value={editNewAddress}
+                        onChange={(e) => setEditNewAddress(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                    <div className="w-[140px] shrink-0">
+                      <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                        Phường / Xã
+                      </label>
+                      <input
+                        type="text"
+                        value={editNewWard}
+                        onChange={(e) => setEditNewWard(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                      Địa chỉ cũ
+                    </label>
+                    <input
+                      type="text"
+                      value={editOldAddress}
+                      onChange={(e) => setEditOldAddress(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                        Số tín hữu
+                      </label>
+                      <input
+                        type="number"
+                        value={editMemberCount}
+                        onChange={(e) => setEditMemberCount(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                        Tín hữu trung tín
+                      </label>
+                      <input
+                        type="number"
+                        value={editRegularAttendance}
+                        onChange={(e) =>
+                          setEditRegularAttendance(e.target.value)
+                        }
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                      Ghi chú
+                    </label>
+                    <textarea
+                      value={editNote}
+                      onChange={(e) => setEditNote(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600 min-h-20"
+                    />
+                  </div>
+
+                  {/* Pastor Manager */}
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1 mt-6">
+                      Giáo phẩm phụ trách
+                    </label>
+                    <div className="space-y-3 border-slate-100 pt-3">
+                      {/* Current assignments */}
+                      {churchPastors.length > 0 && (
+                        <div>
+                          <div className="space-y-1.5">
+                            {churchPastors.map((p) => (
+                              <div
+                                key={p.id || p.name}
+                                className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2.5"
+                              >
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-slate-900 truncate">
+                                      {p.title ? `${p.title} ` : ""}
+                                      {p.name}
+                                    </p>
+                                    <p className="text-[11px] text-slate-500">
+                                      {p.role}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  {p.role !== "Quản nhiệm" && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() =>
+                                        updatePastorAssignmentMutation.mutate({
+                                          churchId: selectedChurch!.id,
+                                          assignmentId: p.id,
+                                          role: "Quản nhiệm",
+                                          isPrimary: true,
+                                        })
+                                      }
+                                      disabled={
+                                        updatePastorAssignmentMutation.isPending
+                                      }
+                                      className="text-[10px] px-2 py-1"
+                                    >
+                                      Làm QN
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                      removePastorMutation.mutate({
+                                        churchId: selectedChurch!.id,
+                                        assignmentId: p.id,
+                                      })
+                                    }
+                                    disabled={removePastorMutation.isPending}
+                                    className="text-red-600 hover:text-red-700 p-1"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Add new pastor */}
+                      <div className=" border-slate-100 pt-3">
+                        <p className="text-[11px] font-semibold uppercase text-slate-400 mb-2">
+                          Thêm mới
+                        </p>
+                        <div className="space-y-2">
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                            <input
+                              type="search"
+                              value={pastorSearch}
+                              onChange={(e) => setPastorSearch(e.target.value)}
+                              placeholder="Tìm tên Mục sư, Truyền đạo..."
+                              className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm outline-none focus:border-indigo-600 min-h-10"
+                            />
+                          </div>
+                          {availablePastors.length > 0 && (
+                            <div className="max-h-48 overflow-y-auto space-y-1 mt-4 scrollbar-none &::-webkit-scrollbar:[hidden]">
+                              {availablePastors
+                                .filter(
+                                  (ap) =>
+                                    !churchPastors.some(
+                                      (cp) =>
+                                        cp.id === ap.id || cp.name === ap.name,
+                                    ),
+                                )
+                                .map((ap) => (
+                                  <button
+                                    key={ap.id || ap.name}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedPastorId(ap.id ?? null);
+                                    }}
+                                    className={cn(
+                                      "w-full text-left rounded-lg p-2.5 transition-colors",
+                                      selectedPastorId === ap.id
+                                        ? "border-indigo-500 bg-indigo-50"
+                                        : "border-slate-200 hover:bg-slate-50",
+                                    )}
+                                  >
+                                    <div className="font-medium text-sm text-slate-900">
+                                      {ap.title ? `${ap.title} ` : ""}
+                                      {ap.name}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">
+                                      {ap.chucVu || "—"}
+                                      {ap.assignments.length > 0 &&
+                                        ` · ${ap.assignments[0].churchName}`}
+                                    </div>
+                                  </button>
+                                ))}
+                            </div>
+                          )}
+                          {selectedPastorId && (
+                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                              <select
+                                value={newPastorRole}
+                                onChange={(e) =>
+                                  setNewPastorRole(
+                                    e.target.value as
+                                      | "Quản nhiệm"
+                                      | "Kiêm nhiệm"
+                                      | "Đặc trách"
+                                      | "Phụ tá",
+                                  )
+                                }
+                                className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-600"
+                              >
+                                <option value="Quản nhiệm">Quản nhiệm</option>
+                                <option value="Kiêm nhiệm">Kiêm nhiệm</option>
+                                <option value="Đặc trách">Đặc trách</option>
+                                <option value="Phụ tá">Phụ tá</option>
+                              </select>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedPastorId(null);
+                                  setPastorSearch("");
+                                }}
+                              >
+                                Hủy
+                              </Button>
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={() => {
+                                  if (!selectedChurch) return;
+                                  addPastorMutation.mutate({
+                                    churchId: selectedChurch.id,
+                                    pastorId: selectedPastorId!,
+                                    role: newPastorRole,
+                                  });
+                                  setSelectedPastorId(null);
+                                  setPastorSearch("");
+                                }}
+                                disabled={addPastorMutation.isPending}
+                              >
+                                {addPastorMutation.isPending
+                                  ? "Đang thêm..."
+                                  : "Thêm"}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Save/Cancel buttons at bottom */}
+                  <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditing(false)}
+                    >
+                      Hủy
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSaveChurch}
+                      disabled={updateChurchDetailsMutation.isPending}
+                    >
+                      {updateChurchDetailsMutation.isPending
+                        ? "Đang lưu..."
+                        : "Lưu thay đổi"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           </>
         )}
       </ResponsiveSheet>
@@ -1239,7 +1431,7 @@ export function ChurchesPage() {
                 type="number"
                 value={memberCount}
                 onChange={(e) => setMemberCount(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 min-h-11"
+                className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 min-h-11 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
             </div>
           </div>

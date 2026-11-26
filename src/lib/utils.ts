@@ -46,7 +46,13 @@ export function matchesPrefix(
   if (!value) return false;
   const normValue = normalizeSearch(value);
   const normQuery = normalizeSearch(query);
-  return normValue.split(/\s+/).some((word) => word.startsWith(normQuery));
+  const queryWords = normQuery.split(/\s+/);
+  const valueWords = normValue.split(/\s+/);
+  
+  // All query words must match the start of some value word
+  return queryWords.every((qWord) =>
+    valueWords.some((vWord) => vWord.startsWith(qWord))
+  );
 }
 
 export function displayChurchName(form: string | null | undefined, name: string): string {
